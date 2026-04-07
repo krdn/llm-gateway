@@ -1,6 +1,6 @@
 {
   "name": "@krdn/ai-analysis-kit",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Domain-agnostic AI analysis runner — provider gateway, generic module engine, and adapter interfaces for building multi-provider LLM analysis pipelines.",
   "type": "module",
   "license": "MIT",
