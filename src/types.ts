@@ -6,7 +6,7 @@
 //
 // 사용자는 자기 도메인의 입력 타입(TInput)과 결과 타입(TResult)을 지정해
 // AnalysisModule을 정의한다. runModule은 입력 형태에 대해 알지 못한다.
-import { z } from 'zod';
+import type { z } from 'zod';
 import type { AIProvider } from './gateway/provider-meta';
 
 export type { AIProvider };

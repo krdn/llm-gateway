@@ -346,20 +346,13 @@ ${JSON.stringify(jsonSchema, null, 2)}`;
 
 \uBC18\uB4DC\uC2DC \uC704 JSON Schema \uAD6C\uC870\uC5D0 \uC815\uD655\uD788 \uB9DE\uB294 \uC720\uD6A8\uD55C JSON\uC73C\uB85C\uB9CC \uC751\uB2F5\uD558\uC138\uC694. \uB9C8\uD06C\uB2E4\uC6B4 \uCF54\uB4DC\uBE14\uB85D, \uC124\uBA85 \uD14D\uC2A4\uD2B8, \uC8FC\uC11D \uC5C6\uC774 \uC21C\uC218 JSON \uAC1D\uCCB4\uB9CC \uCD9C\uB825\uD558\uC138\uC694. \uBAA8\uB4E0 \uD544\uC218 \uD544\uB4DC\uB97C \uBE60\uC9D0\uC5C6\uC774 \uD3EC\uD568\uD558\uB418, \uAC01 \uD14D\uC2A4\uD2B8 \uD544\uB4DC\uB294 2~3\uBB38\uC7A5 \uC774\uB0B4\uB85C \uAC04\uACB0\uD558\uAC8C \uC791\uC131\uD558\uC138\uC694. JSON\uC774 \uC798\uB9AC\uC9C0 \uC54A\uB3C4\uB85D \uC804\uCCB4 \uC751\uB2F5\uC744 \uC644\uACB0\uB41C \uD615\uD0DC\uB85C \uCD9C\uB825\uD558\uC138\uC694.`;
   const systemWithJson = (options.systemPrompt ?? "") + jsonInstruction;
-  let result;
-  try {
-    result = await generateText({
-      model,
-      system: systemWithJson,
-      prompt,
-      maxOutputTokens: options.maxOutputTokens ?? 4096,
-      abortSignal
-    });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[ai-gateway] analyzeStructuredViaText: generateText \uD638\uCD9C \uC2E4\uD328 \u2014 ${msg}`);
-    throw e;
-  }
+  const result = await generateText({
+    model,
+    system: systemWithJson,
+    prompt,
+    maxOutputTokens: options.maxOutputTokens ?? 4096,
+    abortSignal
+  });
   console.log(
     `[ai-gateway] analyzeStructuredViaText: \uC751\uB2F5 \uC218\uC2E0 (finishReason=${result.finishReason}, \uD14D\uC2A4\uD2B8 \uAE38\uC774=${result.text.length})`
   );

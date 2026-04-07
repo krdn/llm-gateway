@@ -73,9 +73,27 @@ export interface ProgressEvent {
 }
 
 /**
- * 단일 분석 모듈 실행 (AI Gateway 호출 + 어댑터 콜백)
- * 부분 실패 허용 — 실패 시에도 throw하지 않고 failed 상태 반환.
- * Rate limit 발생 시 exponential backoff로 재시도.
+ * 단일 분석 모듈을 실행한다 (AI Gateway 호출 + 어댑터 콜백 통합).
+ *
+ * 동작 단계:
+ *   1. `extractMeta(input)`로 jobId/itemCount 획득
+ *   2. itemCount === 0이면 즉시 `skipped` 반환
+ *   3. `configAdapter.resolve(module.name)`로 모델 설정 해석
+ *   4. 매 시도마다 `pipelineControl.isCancelled` / `waitIfPaused` 체크
+ *   5. `analyzeStructured()` 호출 → 결과 반환 + onPersist(`completed`)
+ *   6. Rate limit 에러: exponential backoff로 최대 5회 재시도
+ *   7. Server overload(503): 15초 후 1회만 재시도
+ *   8. 모든 재시도 실패 시 throw하지 않고 `failed` 상태 반환
+ *
+ * 에러 처리 정책: **부분 실패 허용** — 한 모듈의 실패가 전체 파이프라인을
+ * 중단시키지 않도록 항상 `AnalysisModuleResult`를 반환한다.
+ *
+ * @template TInput  소비자 도메인 입력 타입
+ * @template TResult 모듈 스키마가 검증하는 결과 타입
+ * @param module 실행할 분석 모듈
+ * @param input 모듈에 전달할 입력 데이터
+ * @param options 어댑터 + 콜백 옵션
+ * @param priorResults 선행 모듈 결과 (Stage 2+ 모듈의 컨텍스트)
  */
 export async function runModule<TInput, TResult>(
   module: AnalysisModule<TInput, TResult>,
@@ -122,7 +140,6 @@ export async function runModule<TInput, TResult>(
       maxOutputTokens: config.maxOutputTokens ?? 8192,
     };
 
-    let lastError: unknown;
     for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
       // 매 시도 전 취소 확인
       if (await pipelineControl.isCancelled(jobId)) {
@@ -163,8 +180,6 @@ export async function runModule<TInput, TResult>(
         onProgress({ module: module.name, phase: 'complete' });
         return moduleResult;
       } catch (error) {
-        lastError = error;
-
         if (isRateLimitError(error) && attempt < MAX_RATE_LIMIT_RETRIES) {
           const retryAfterSec = parseRetryAfter(error);
           const backoffMs = Math.max(retryAfterSec * 1000, (attempt + 1) * 3000);
@@ -193,7 +208,8 @@ export async function runModule<TInput, TResult>(
         throw error;
       }
     }
-    throw lastError;
+    // 루프 내 throw로 빠져나가므로 도달 불가 — 안전망
+    throw new Error(`${module.name}: 재시도 한도 초과`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : undefined;

@@ -3,7 +3,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 // gemini-cli: 네이티브/WASM 의존성이 많아 동적 import (워커에서만 사용, 웹 빌드 제외)
-import { z } from 'zod';
+import type { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
   needsTextFallback as checkNeedsTextFallback,
@@ -139,7 +139,14 @@ export async function getModel(
   }
 }
 
-/** 외부 AbortSignal과 타임아웃을 병합 — 둘 중 하나라도 발동하면 abort */
+/**
+ * 외부 `AbortSignal`과 타임아웃 타이머를 하나의 signal로 병합한다.
+ * 외부 signal이 abort되거나 타임아웃이 만료되면 결과 signal도 abort 된다.
+ * 외부 signal이 없으면 단순 `AbortSignal.timeout()` 반환.
+ *
+ * @param external 호출자가 전달한 abort signal (선택)
+ * @param timeoutMs 타임아웃 ms (기본 300,000 = 5분)
+ */
 function mergeAbortSignals(external?: AbortSignal, timeoutMs?: number): AbortSignal {
   const timeout = timeoutMs ?? 300_000;
   if (!external) return AbortSignal.timeout(timeout);
@@ -163,7 +170,14 @@ function mergeAbortSignals(external?: AbortSignal, timeoutMs?: number): AbortSig
   return controller.signal;
 }
 
-// 텍스트 분석 -- systemPrompt + usage 반환 지원
+/**
+ * 자유 텍스트 응답을 생성한다.
+ *
+ * @param prompt 사용자 프롬프트
+ * @param options 프로바이더/모델/타임아웃 등 게이트웨이 옵션
+ * @returns `{ text, usage, finishReason }` — usage는 프로바이더 원본 형식이므로
+ *          소비자는 `normalizeUsage()`로 정규화하는 것을 권장
+ */
 export async function analyzeText(prompt: string, options: AIGatewayOptions = {}) {
   const provider = options.provider ?? 'anthropic';
   const result = await generateText({
@@ -180,8 +194,22 @@ export async function analyzeText(prompt: string, options: AIGatewayOptions = {}
   };
 }
 
-// 구조화 분석 -- systemPrompt + usage 반환 지원
-// 파싱 실패 시 즉시 에러 전파 (재시도/폴백 없음 — 비용 낭비 방지)
+/**
+ * Zod 스키마로 검증된 구조화 객체를 반환한다.
+ *
+ * 네이티브 구조화 출력(`generateObject`)을 지원하지 않는 프로바이더
+ * (claude-cli, gemini-cli, ollama, custom 등)는 자동으로
+ * `generateText` + JSON 추출 + Zod 파싱 폴백 경로를 사용한다.
+ *
+ * 파싱/검증 실패 시 즉시 에러를 전파한다 (재시도/재호출 없음 — 비용 낭비 방지).
+ * 재시도가 필요하면 호출자(`runModule`)에서 처리한다.
+ *
+ * @template T Zod 스키마가 검증하는 결과 타입
+ * @param prompt 사용자 프롬프트
+ * @param schema 응답을 검증할 Zod 스키마
+ * @param options 게이트웨이 옵션
+ * @returns `{ object, usage, finishReason }`
+ */
 export async function analyzeStructured<T>(
   prompt: string,
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
@@ -216,7 +244,19 @@ export async function analyzeStructured<T>(
   };
 }
 
-// LLM 응답 텍스트에서 JSON을 추출 (마크다운 코드블록 처리 + 잘린 JSON 복구)
+/**
+ * LLM 텍스트 응답에서 JSON 문자열을 추출한다.
+ *
+ * 추출 우선순위:
+ *   1. ```json ... ``` 또는 ``` ... ``` 코드블록 내부
+ *   2. 최외곽 `{...}` 또는 `[...]`
+ *   3. 위 둘 다 실패 시 입력 문자열 전체 (trim)
+ *
+ * 추출 후 `JSON.parse`로 유효성을 검사하고, 실패 시
+ * `repairTruncatedJson()`으로 토큰 초과로 잘린 응답을 복구한다.
+ *
+ * @internal export 안 함 — analyzeStructuredViaText에서만 사용
+ */
 function extractJson(text: string): string {
   let json: string;
   // ```json ... ``` 코드블록 추출
@@ -238,7 +278,20 @@ function extractJson(text: string): string {
   }
 }
 
-// 토큰 초과로 잘린 JSON을 복구 — 열린 괄호/따옴표를 닫아줌
+/**
+ * 토큰 초과로 잘린 JSON 문자열을 복구한다.
+ *
+ * 알고리즘:
+ *   1. 홀수 개의 `"` (열린 문자열)이 있으면 마지막 미완성 키-값을 잘라냄
+ *   2. 마지막 `}`/`]` 뒤에 남은 부분 문자열에 `,`만 있으면 잘라냄
+ *   3. 트레일링 쉼표 제거
+ *   4. 스택 기반으로 열린 `{`/`[`를 역순으로 닫아 균형 맞춤
+ *
+ * 모든 에지 케이스를 100% 복구하지는 못하지만,
+ * Anthropic/OpenAI 등의 일반적인 토큰 절단 케이스 다수를 처리한다.
+ *
+ * @internal export 안 함 — extractJson에서만 사용
+ */
 function repairTruncatedJson(json: string): string {
   // 마지막 불완전한 속성/원소를 잘라내고 괄호를 닫음
   // 1) 마지막 완전한 원소 이후를 찾아서 자르기
@@ -318,20 +371,14 @@ async function analyzeStructuredViaText<T>(
   const jsonInstruction = `${schemaBlock}\n\n반드시 위 JSON Schema 구조에 정확히 맞는 유효한 JSON으로만 응답하세요. 마크다운 코드블록, 설명 텍스트, 주석 없이 순수 JSON 객체만 출력하세요. 모든 필수 필드를 빠짐없이 포함하되, 각 텍스트 필드는 2~3문장 이내로 간결하게 작성하세요. JSON이 잘리지 않도록 전체 응답을 완결된 형태로 출력하세요.`;
   const systemWithJson = (options.systemPrompt ?? '') + jsonInstruction;
 
-  let result;
-  try {
-    result = await generateText({
-      model,
-      system: systemWithJson,
-      prompt,
-      maxOutputTokens: options.maxOutputTokens ?? 4096,
-      abortSignal,
-    });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[ai-gateway] analyzeStructuredViaText: generateText 호출 실패 — ${msg}`);
-    throw e;
-  }
+  // 호출 실패는 호출자(runModule)에서 일괄 로깅 — 여기서는 그대로 전파
+  const result = await generateText({
+    model,
+    system: systemWithJson,
+    prompt,
+    maxOutputTokens: options.maxOutputTokens ?? 4096,
+    abortSignal,
+  });
 
   console.log(
     `[ai-gateway] analyzeStructuredViaText: 응답 수신 (finishReason=${result.finishReason}, 텍스트 길이=${result.text.length})`,
