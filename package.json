@@ -1,7 +1,7 @@
 {
   "name": "@krdn/ai-analysis-kit",
-  "version": "1.0.0",
-  "description": "Reusable AI analysis modules (12 modules) for political opinion analysis pipelines — extracted from ai-signalcraft.",
+  "version": "2.0.0",
+  "description": "Domain-agnostic AI analysis runner — provider gateway, generic module engine, and adapter interfaces for building multi-provider LLM analysis pipelines.",
   "type": "module",
   "license": "MIT",
   "author": "krdn",
@@ -17,14 +17,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./modules": {
-      "types": "./dist/modules/index.d.ts",
-      "import": "./dist/modules/index.js"
-    },
-    "./schemas": {
-      "types": "./dist/schemas/index.d.ts",
-      "import": "./dist/schemas/index.js"
-    },
     "./gateway": {
       "types": "./dist/gateway/index.d.ts",
       "import": "./dist/gateway/index.js"
@@ -38,9 +30,6 @@
       "import": "./dist/runner/index.js"
     }
   },
-  "bin": {
-    "ai-analysis": "./dist/cli/index.js"
-  },
   "files": [
     "dist",
     "README.md",
@@ -48,13 +37,11 @@
   ],
   "scripts": {
     "build": "tsup",
-    "build:tsc": "tsc -p tsconfig.build.json",
     "dev": "tsup --watch",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "eval": "node dist/cli/index.js eval",
     "prepack": "pnpm build",
     "prepublishOnly": "pnpm build && pnpm test"
   },
@@ -64,7 +51,6 @@
     "@ai-sdk/openai": "latest",
     "ai": "^6.0.0",
     "ai-sdk-provider-gemini-cli": "^2.0.1",
-    "cac": "^6.7.14",
     "zod": "^3.24.0",
     "zod-to-json-schema": "^3.25.2"
   },
@@ -83,10 +69,11 @@
   "keywords": [
     "ai",
     "llm",
-    "analysis",
-    "political-opinion",
+    "analysis-runner",
     "claude",
     "gemini",
-    "vercel-ai-sdk"
+    "openai",
+    "vercel-ai-sdk",
+    "multi-provider"
   ]
 }

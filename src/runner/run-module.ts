@@ -1,6 +1,9 @@
-// 분석 모듈 단일 실행 러너 — DB 의존성 제거 버전
-// ai-signalcraft의 runner.ts에서 DB 호출(persistAnalysisResult, getModuleModelConfig,
-// isPipelineCancelled, appendJobEvent)을 어댑터로 추상화한 것
+// 분석 모듈 단일 실행 러너 — 도메인 무관 (v2.0.0)
+//
+// v1.x → v2.0.0 BREAKING:
+//   - input 타입이 AnalysisInput 고정 → 제네릭 TInput
+//   - jobId/itemCount는 RunModuleOptions.extractMeta 콜백으로 추출
+//   - "수집 데이터 없음" 스킵 조건이 articles+videos+comments → meta.itemCount === 0
 import {
   analyzeStructured,
   normalizeUsage,
@@ -15,7 +18,11 @@ import {
   noopPipelineControl,
   type PipelineControlAdapter,
 } from '../adapters/pipeline-control';
-import type { AnalysisModule, AnalysisInput, AnalysisModuleResult } from '../types';
+import type {
+  AnalysisModule,
+  AnalysisInputMeta,
+  AnalysisModuleResult,
+} from '../types';
 import {
   isRateLimitError,
   isServerOverloadError,
@@ -24,15 +31,23 @@ import {
   MAX_RATE_LIMIT_RETRIES,
 } from './retry-utils';
 
-export interface RunModuleOptions {
+/**
+ * runModule 옵션 (v2.0.0)
+ *
+ * @template TInput 소비자 도메인 입력 타입 — 옵션 자체엔 직접 안 쓰이지만,
+ *                  extractMeta가 같은 TInput을 받도록 보장하기 위해 노출.
+ */
+export interface RunModuleOptions<TInput = unknown> {
   /** 모듈별 모델/프로바이더/엔드포인트를 해석하는 어댑터 */
   configAdapter: ModelConfigAdapter;
+  /**
+   * 입력에서 jobId/itemCount를 추출하는 콜백.
+   * v1.x의 input.jobId / articles+videos+comments.length 하드코딩을 대체.
+   */
+  extractMeta: (input: TInput) => AnalysisInputMeta;
   /** 파이프라인 제어 어댑터. 미지정 시 noop (단독 실행) */
   pipelineControl?: PipelineControlAdapter;
-  /**
-   * 모듈 시작/완료/실패 단계마다 호출되는 콜백.
-   * ai-signalcraft는 여기서 DB persist를 수행한다.
-   */
+  /** 모듈 시작/완료/실패 단계마다 호출되는 콜백 (DB persist 등) */
   onPersist?: (result: PersistEvent) => Promise<void> | void;
   /** 진행 상황 로깅 콜백 (선택) */
   onProgress?: (event: ProgressEvent) => void;
@@ -59,34 +74,36 @@ export interface ProgressEvent {
 
 /**
  * 단일 분석 모듈 실행 (AI Gateway 호출 + 어댑터 콜백)
- * 부분 실패 허용 — 실패 시에도 에러를 throw하지 않고 failed 상태 반환
- * Rate limit 발생 시 exponential backoff로 재시도
+ * 부분 실패 허용 — 실패 시에도 throw하지 않고 failed 상태 반환.
+ * Rate limit 발생 시 exponential backoff로 재시도.
  */
-export async function runModule<T>(
-  module: AnalysisModule<T>,
-  input: AnalysisInput,
-  options: RunModuleOptions,
+export async function runModule<TInput, TResult>(
+  module: AnalysisModule<TInput, TResult>,
+  input: TInput,
+  options: RunModuleOptions<TInput>,
   priorResults?: Record<string, unknown>,
-): Promise<AnalysisModuleResult<T>> {
+): Promise<AnalysisModuleResult<TResult>> {
   const pipelineControl = options.pipelineControl ?? noopPipelineControl;
   const onPersist = options.onPersist ?? (async () => undefined);
   const onProgress = options.onProgress ?? (() => undefined);
 
-  // 수집 데이터가 없으면 분석 스킵
-  const totalItems = input.articles.length + input.videos.length + input.comments.length;
-  if (totalItems === 0) {
-    onProgress({ module: module.name, phase: 'skip', message: '수집 데이터 0건' });
+  const meta = options.extractMeta(input);
+  const { jobId, itemCount } = meta;
+
+  // 입력 데이터가 없으면 분석 스킵 (도메인 측이 정의)
+  if (itemCount === 0) {
+    onProgress({ module: module.name, phase: 'skip', message: '입력 데이터 0건' });
     await onPersist({
-      jobId: input.jobId,
+      jobId,
       module: module.name,
       status: 'skipped',
-      errorMessage: '수집 데이터 없음 — 분석 스킵',
+      errorMessage: '입력 데이터 없음 — 분석 스킵',
     });
-    return { module: module.name, status: 'skipped', errorMessage: '수집 데이터 없음' };
+    return { module: module.name, status: 'skipped', errorMessage: '입력 데이터 없음' };
   }
 
   try {
-    await onPersist({ jobId: input.jobId, module: module.name, status: 'running' });
+    await onPersist({ jobId, module: module.name, status: 'running' });
     onProgress({ module: module.name, phase: 'start' });
 
     const config: ResolvedModelConfig = await options.configAdapter.resolve(module.name);
@@ -108,7 +125,7 @@ export async function runModule<T>(
     let lastError: unknown;
     for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
       // 매 시도 전 취소 확인
-      if (await pipelineControl.isCancelled(input.jobId)) {
+      if (await pipelineControl.isCancelled(jobId)) {
         onProgress({
           module: module.name,
           phase: 'fail',
@@ -120,12 +137,12 @@ export async function runModule<T>(
           errorMessage: '사용자에 의해 중지됨',
         };
       }
-      await pipelineControl.waitIfPaused(input.jobId);
+      await pipelineControl.waitIfPaused(jobId);
 
       try {
         const result = await analyzeStructured(prompt, module.schema, gatewayOptions);
 
-        const moduleResult: AnalysisModuleResult<T> = {
+        const moduleResult: AnalysisModuleResult<TResult> = {
           module: module.name,
           status: 'completed',
           result: result.object,
@@ -137,7 +154,7 @@ export async function runModule<T>(
         };
 
         await onPersist({
-          jobId: input.jobId,
+          jobId,
           module: module.name,
           status: 'completed',
           result: moduleResult.result,
@@ -159,7 +176,7 @@ export async function runModule<T>(
             attempt: attempt + 1,
           });
           await pipelineControl
-            .appendEvent(input.jobId, 'warn', msg)
+            .appendEvent(jobId, 'warn', msg)
             .catch(() => undefined);
           await sleep(backoffMs);
           continue;
@@ -168,7 +185,7 @@ export async function runModule<T>(
           const msg = `${module.name}: 서버 과부하, 15초 후 재시도`;
           onProgress({ module: module.name, phase: 'retry', message: msg, attempt: 1 });
           await pipelineControl
-            .appendEvent(input.jobId, 'warn', msg)
+            .appendEvent(jobId, 'warn', msg)
             .catch(() => undefined);
           await sleep(15_000);
           continue;
@@ -187,13 +204,13 @@ export async function runModule<T>(
     }
 
     await onPersist({
-      jobId: input.jobId,
+      jobId,
       module: module.name,
       status: 'failed',
       errorMessage,
     });
     await pipelineControl
-      .appendEvent(input.jobId, 'error', `${module.name} 분석 실패: ${errorMessage}`)
+      .appendEvent(jobId, 'error', `${module.name} 분석 실패: ${errorMessage}`)
       .catch(() => undefined);
 
     return { module: module.name, status: 'failed', errorMessage };

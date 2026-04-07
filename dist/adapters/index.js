@@ -1,31 +1,13 @@
-// src/types.ts
-var MODULE_MODEL_MAP = {
-  // Stage 1: 대량 텍스트 요약/분류 — 속도·비용 우선
-  "macro-view": { provider: "gemini", model: "gemini-2.5-flash" },
-  segmentation: { provider: "gemini", model: "gemini-2.5-flash" },
-  "sentiment-framing": { provider: "gemini", model: "gemini-2.5-flash" },
-  "message-impact": { provider: "gemini", model: "gemini-2.5-flash" },
-  // Stage 2: 복합 추론/전략 — 품질 우선
-  "risk-map": { provider: "anthropic", model: "claude-sonnet-4-6" },
-  opportunity: { provider: "anthropic", model: "claude-sonnet-4-6" },
-  strategy: { provider: "anthropic", model: "claude-sonnet-4-6" },
-  "final-summary": { provider: "anthropic", model: "claude-sonnet-4-6" },
-  "integrated-report": { provider: "anthropic", model: "claude-sonnet-4-6" },
-  // Stage 4: ADVN 고급 분석 모듈
-  "approval-rating": { provider: "anthropic", model: "claude-sonnet-4-6" },
-  "frame-war": { provider: "anthropic", model: "claude-sonnet-4-6" },
-  "crisis-scenario": { provider: "anthropic", model: "claude-sonnet-4-6" },
-  "win-simulation": { provider: "anthropic", model: "claude-sonnet-4-6" }
-};
-
 // src/adapters/model-config.ts
-function createInMemoryModelConfig(options = {}) {
-  const { overrides = {}, providerDefaults = {} } = options;
+function createInMemoryModelConfig(options) {
+  const { modules, overrides = {}, providerDefaults = {} } = options;
   return {
     async resolve(moduleName) {
-      const base = MODULE_MODEL_MAP[moduleName];
+      const base = modules[moduleName];
       if (!base) {
-        throw new Error(`[model-config] Unknown module: ${moduleName}`);
+        throw new Error(
+          `[model-config] Unknown module: ${moduleName}. Pass it via createInMemoryModelConfig({ modules: { ... } }).`
+        );
       }
       const providerDefault = providerDefaults[base.provider] ?? {};
       const override = overrides[moduleName] ?? {};

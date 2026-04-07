@@ -9,7 +9,9 @@ import type { ConcurrencyAdapter } from '../adapters/concurrency';
  * - 다른 프로바이더는 서로 독립 (전부 병렬)
  * - 각 모듈의 결과는 PromiseSettledResult로 반환 (부분 실패 허용)
  */
-export async function runWithProviderGrouping<M extends AnalysisModule>(
+export async function runWithProviderGrouping<
+  M extends AnalysisModule<unknown, unknown>,
+>(
   modules: M[],
   runner: (module: M) => Promise<AnalysisModuleResult>,
   concurrency: ConcurrencyAdapter,

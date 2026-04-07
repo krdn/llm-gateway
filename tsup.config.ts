@@ -3,12 +3,9 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
-    'modules/index': 'src/modules/index.ts',
-    'schemas/index': 'src/schemas/index.ts',
     'gateway/index': 'src/gateway/index.ts',
     'adapters/index': 'src/adapters/index.ts',
     'runner/index': 'src/runner/index.ts',
-    'cli/index': 'cli/index.ts',
   },
   format: ['esm'],
   dts: true,
@@ -26,6 +23,5 @@ export default defineConfig({
     'ai-sdk-provider-gemini-cli',
     'zod',
     'zod-to-json-schema',
-    'cac',
   ],
 });

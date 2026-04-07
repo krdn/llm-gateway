@@ -16,6 +16,14 @@ interface ModelConfigAdapter {
     resolve(moduleName: string): Promise<ResolvedModelConfig>;
 }
 interface InMemoryModelConfigOptions {
+    /**
+     * 모듈명 → 기본 provider/model 매핑.
+     * v1.x에서 도메인 하드코딩(MODULE_MODEL_MAP)이던 부분이 v2.0.0부터 명시적 입력으로 변경됨.
+     */
+    modules: Record<string, {
+        provider: AIProvider;
+        model: string;
+    }>;
     /** 모듈별 부분 오버라이드 */
     overrides?: Partial<Record<string, Partial<ResolvedModelConfig>>>;
     /** 프로바이더별 공통 apiKey/baseUrl */
@@ -26,10 +34,13 @@ interface InMemoryModelConfigOptions {
     }>>;
 }
 /**
- * 기본 in-memory 어댑터 — MODULE_MODEL_MAP을 기반으로 동작.
+ * 기본 in-memory 어댑터 — `options.modules` 매핑을 기반으로 동작.
  * apiKey는 providerDefaults 또는 환경변수에서 자동 추론.
+ *
+ * v2.0.0 BREAKING: `modules` 옵션이 필수. v1.x는 MODULE_MODEL_MAP에서 자동 추론했지만
+ * v2부터는 도메인 매핑을 모르므로 호출자가 명시해야 한다.
  */
-declare function createInMemoryModelConfig(options?: InMemoryModelConfigOptions): ModelConfigAdapter;
+declare function createInMemoryModelConfig(options: InMemoryModelConfigOptions): ModelConfigAdapter;
 
 /**
  * 파이프라인 제어 인터페이스 — 취소/일시정지/비용 한도 검사를
