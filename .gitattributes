@@ -1,0 +1,3 @@
+dist/* linguist-generated=true
+dist/* -diff
+*.map -diff

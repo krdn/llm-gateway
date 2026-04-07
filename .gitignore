@@ -1,0 +1,9 @@
+node_modules
+*.log
+.env
+.env.local
+.DS_Store
+coverage
+.vitest-cache
+.tsbuildinfo
+# dist는 release 시 커밋 (Git URL 설치 패턴)
