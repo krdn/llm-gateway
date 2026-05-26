@@ -53,6 +53,7 @@ var PROVIDER_REGISTRY = {
     supportsStructuredOutput: true,
     requiresJsonMode: false,
     callMethod: "chat",
+    defaultApiKey: "ollama",
     color: "bg-purple-500"
   },
   xai: {
@@ -65,6 +66,7 @@ var PROVIDER_REGISTRY = {
     supportsStructuredOutput: true,
     requiresJsonMode: false,
     callMethod: "chat",
+    defaultApiKey: "ollama",
     color: "bg-red-500"
   },
   openrouter: {
@@ -77,6 +79,7 @@ var PROVIDER_REGISTRY = {
     supportsStructuredOutput: true,
     requiresJsonMode: true,
     callMethod: "chat",
+    defaultApiKey: "ollama",
     color: "bg-cyan-500"
   },
   // --- Proxy CLI ---
@@ -186,7 +189,7 @@ async function getModel(provider, model, baseUrl, apiKey) {
   const sdkOpts = {};
   if (meta.callMethod === "chat") {
     sdkOpts.baseURL = resolveBaseUrlForChat(provider, baseUrl);
-    sdkOpts.apiKey = apiKey || meta.defaultApiKey || "ollama";
+    sdkOpts.apiKey = apiKey || meta.defaultApiKey;
   } else {
     if (apiKey) sdkOpts.apiKey = apiKey;
     if (baseUrl) sdkOpts.baseURL = baseUrl;

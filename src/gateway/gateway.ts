@@ -226,9 +226,9 @@ export async function analyzeStructured<T>(
  * 추출 후 `JSON.parse`로 유효성을 검사하고, 실패 시
  * `repairTruncatedJson()`으로 토큰 초과로 잘린 응답을 복구한다.
  *
- * @internal export 안 함 — analyzeStructuredViaText에서만 사용
+ * @internal 테스트용으로만 export — 외부 소비자 사용 금지
  */
-function extractJson(text: string): string {
+export function extractJson(text: string): string {
   let json: string;
   // ```json ... ``` 코드블록 추출
   const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
@@ -261,9 +261,9 @@ function extractJson(text: string): string {
  * 모든 에지 케이스를 100% 복구하지는 못하지만,
  * Anthropic/OpenAI 등의 일반적인 토큰 절단 케이스 다수를 처리한다.
  *
- * @internal export 안 함 — extractJson에서만 사용
+ * @internal 테스트용으로만 export — 외부 소비자 사용 금지
  */
-function repairTruncatedJson(json: string): string {
+export function repairTruncatedJson(json: string): string {
   // 마지막 불완전한 속성/원소를 잘라내고 괄호를 닫음
   // 1) 마지막 완전한 원소 이후를 찾아서 자르기
   let trimmed = json;
