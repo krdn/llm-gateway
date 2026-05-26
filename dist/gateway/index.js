@@ -17,6 +17,7 @@ var PROVIDER_REGISTRY = {
     requiresBaseUrl: false,
     supportsStructuredOutput: true,
     requiresJsonMode: false,
+    callMethod: "direct",
     color: "bg-orange-500"
   },
   openai: {
@@ -28,6 +29,7 @@ var PROVIDER_REGISTRY = {
     defaultBaseUrl: "https://api.openai.com/v1",
     supportsStructuredOutput: true,
     requiresJsonMode: false,
+    callMethod: "direct",
     color: "bg-green-500"
   },
   gemini: {
@@ -38,6 +40,7 @@ var PROVIDER_REGISTRY = {
     requiresBaseUrl: false,
     supportsStructuredOutput: true,
     requiresJsonMode: false,
+    callMethod: "direct",
     color: "bg-blue-500"
   },
   deepseek: {
@@ -49,6 +52,7 @@ var PROVIDER_REGISTRY = {
     defaultBaseUrl: "https://api.deepseek.com/v1",
     supportsStructuredOutput: true,
     requiresJsonMode: false,
+    callMethod: "chat",
     color: "bg-purple-500"
   },
   xai: {
@@ -60,6 +64,7 @@ var PROVIDER_REGISTRY = {
     defaultBaseUrl: "https://api.x.ai/v1",
     supportsStructuredOutput: true,
     requiresJsonMode: false,
+    callMethod: "chat",
     color: "bg-red-500"
   },
   openrouter: {
@@ -70,8 +75,8 @@ var PROVIDER_REGISTRY = {
     requiresBaseUrl: false,
     defaultBaseUrl: "https://openrouter.ai/api/v1",
     supportsStructuredOutput: true,
-    // generateObject + mode:'json' 사용
     requiresJsonMode: true,
+    callMethod: "chat",
     color: "bg-cyan-500"
   },
   // --- Proxy CLI ---
@@ -84,6 +89,8 @@ var PROVIDER_REGISTRY = {
     defaultBaseUrl: "http://localhost:8317",
     supportsStructuredOutput: false,
     requiresJsonMode: false,
+    callMethod: "chat",
+    defaultApiKey: "cli-proxy",
     color: "bg-amber-500"
   },
   "gemini-cli": {
@@ -94,6 +101,7 @@ var PROVIDER_REGISTRY = {
     requiresBaseUrl: false,
     supportsStructuredOutput: false,
     requiresJsonMode: false,
+    callMethod: "direct",
     color: "bg-teal-500"
   },
   // --- 로컬 ---
@@ -105,8 +113,9 @@ var PROVIDER_REGISTRY = {
     requiresBaseUrl: false,
     defaultBaseUrl: "http://localhost:11434",
     supportsStructuredOutput: false,
-    // Open WebUI 프록시가 response_format을 Ollama에 전달 안 함 → text fallback 필수
     requiresJsonMode: false,
+    callMethod: "chat",
+    defaultApiKey: "ollama",
     color: "bg-gray-500"
   },
   custom: {
@@ -117,6 +126,8 @@ var PROVIDER_REGISTRY = {
     requiresBaseUrl: true,
     supportsStructuredOutput: false,
     requiresJsonMode: false,
+    callMethod: "chat",
+    defaultApiKey: "ollama",
     color: "bg-zinc-500"
   }
 };
@@ -148,76 +159,40 @@ var DEFAULT_MODELS = {
   gemini: "gemini-2.5-flash",
   deepseek: "deepseek-chat"
 };
-var DEFAULT_BASE_URLS = {
-  openai: "https://api.openai.com/v1",
-  deepseek: "https://api.deepseek.com/v1",
-  xai: "https://api.x.ai/v1",
-  openrouter: "https://openrouter.ai/api/v1",
-  ollama: "http://localhost:11434/v1"
+var SDK_MAP = {
+  anthropic: (opts) => createAnthropic(opts),
+  gemini: (opts) => createGoogleGenerativeAI(opts),
+  openai: (opts) => createOpenAI(opts)
 };
+function resolveBaseUrlForChat(provider, baseUrl) {
+  if (baseUrl) {
+    const cleaned = baseUrl.replace(/\/+$/, "");
+    return cleaned.endsWith("/v1") ? cleaned : `${cleaned}/v1`;
+  }
+  const defaultUrl = PROVIDER_REGISTRY[provider].defaultBaseUrl ?? "http://localhost:11434";
+  return defaultUrl.endsWith("/v1") ? defaultUrl : `${defaultUrl}/v1`;
+}
 async function getModel(provider, model, baseUrl, apiKey) {
   const modelName = model ?? DEFAULT_MODELS[provider] ?? "gpt-4.1-nano";
   console.log(
     `[llm-gateway] getModel: provider=${provider}, model=${modelName}, baseUrl=${baseUrl ?? "none"}, hasApiKey=${!!apiKey}`
   );
-  switch (provider) {
-    case "anthropic": {
-      const client = createAnthropic({
-        ...apiKey ? { apiKey } : {},
-        ...baseUrl ? { baseURL: baseUrl } : {}
-      });
-      return client(modelName);
-    }
-    case "gemini": {
-      const client = createGoogleGenerativeAI({
-        ...apiKey ? { apiKey } : {},
-        ...baseUrl ? { baseURL: baseUrl } : {}
-      });
-      return client(modelName);
-    }
-    case "gemini-cli": {
-      const { createGeminiProvider } = await import('ai-sdk-provider-gemini-cli');
-      const client = createGeminiProvider({
-        authType: "oauth-personal"
-      });
-      return client(modelName);
-    }
-    case "claude-cli": {
-      const proxyBaseUrl = baseUrl ? baseUrl.replace(/\/+$/, "") : "http://localhost:8317";
-      const resolvedUrl = proxyBaseUrl.endsWith("/v1") ? proxyBaseUrl : `${proxyBaseUrl}/v1`;
-      const client = createOpenAI({
-        baseURL: resolvedUrl,
-        apiKey: apiKey || "cli-proxy"
-      });
-      return client.chat(modelName);
-    }
-    case "ollama":
-    case "deepseek":
-    case "xai":
-    case "openrouter":
-    case "custom": {
-      let resolvedBaseUrl;
-      if (baseUrl) {
-        const cleaned = baseUrl.replace(/\/+$/, "");
-        resolvedBaseUrl = cleaned.endsWith("/v1") ? cleaned : `${cleaned}/v1`;
-      } else {
-        resolvedBaseUrl = DEFAULT_BASE_URLS[provider] ?? "http://localhost:11434/v1";
-      }
-      const client = createOpenAI({
-        baseURL: resolvedBaseUrl,
-        apiKey: apiKey || "ollama"
-      });
-      return client.chat(modelName);
-    }
-    case "openai":
-    default: {
-      const client = createOpenAI({
-        ...apiKey ? { apiKey } : {},
-        ...baseUrl ? { baseURL: baseUrl } : {}
-      });
-      return client(modelName);
-    }
+  if (provider === "gemini-cli") {
+    const { createGeminiProvider } = await import('ai-sdk-provider-gemini-cli');
+    return createGeminiProvider({ authType: "oauth-personal" })(modelName);
   }
+  const meta = PROVIDER_REGISTRY[provider];
+  const sdkFactory = SDK_MAP[provider] ?? ((opts) => createOpenAI(opts));
+  const sdkOpts = {};
+  if (meta.callMethod === "chat") {
+    sdkOpts.baseURL = resolveBaseUrlForChat(provider, baseUrl);
+    sdkOpts.apiKey = apiKey || meta.defaultApiKey || "ollama";
+  } else {
+    if (apiKey) sdkOpts.apiKey = apiKey;
+    if (baseUrl) sdkOpts.baseURL = baseUrl;
+  }
+  const client = sdkFactory(sdkOpts);
+  return meta.callMethod === "chat" ? client.chat(modelName) : client(modelName);
 }
 function mergeAbortSignals(external, timeoutMs) {
   const timeout = timeoutMs ?? 3e5;

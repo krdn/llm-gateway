@@ -16,6 +16,9 @@ export type AIProvider =
 /** 프로바이더 접근 방식 */
 export type AccessMethod = 'direct-api' | 'proxy-cli' | 'local';
 
+/** SDK 클라이언트 호출 방식 */
+export type CallMethod = 'direct' | 'chat';
+
 /** 프로바이더 메타데이터 */
 export interface ProviderMeta {
   type: AIProvider;
@@ -28,6 +31,10 @@ export interface ProviderMeta {
   supportsStructuredOutput: boolean;
   /** json mode 필요 여부 (openrouter) */
   requiresJsonMode: boolean;
+  /** SDK 클라이언트 호출 방식: 'direct' = client(model), 'chat' = client.chat(model) */
+  callMethod: CallMethod;
+  /** API 키 미전달 시 기본값 (ollama → 'ollama', claude-cli → 'cli-proxy') */
+  defaultApiKey?: string;
   color: string;
 }
 
@@ -41,6 +48,7 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresBaseUrl: false,
     supportsStructuredOutput: true,
     requiresJsonMode: false,
+    callMethod: 'direct',
     color: 'bg-orange-500',
   },
   openai: {
@@ -52,6 +60,7 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     defaultBaseUrl: 'https://api.openai.com/v1',
     supportsStructuredOutput: true,
     requiresJsonMode: false,
+    callMethod: 'direct',
     color: 'bg-green-500',
   },
   gemini: {
@@ -62,6 +71,7 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresBaseUrl: false,
     supportsStructuredOutput: true,
     requiresJsonMode: false,
+    callMethod: 'direct',
     color: 'bg-blue-500',
   },
   deepseek: {
@@ -73,6 +83,8 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     defaultBaseUrl: 'https://api.deepseek.com/v1',
     supportsStructuredOutput: true,
     requiresJsonMode: false,
+    callMethod: 'chat',
+    defaultApiKey: 'ollama',
     color: 'bg-purple-500',
   },
   xai: {
@@ -84,6 +96,8 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     defaultBaseUrl: 'https://api.x.ai/v1',
     supportsStructuredOutput: true,
     requiresJsonMode: false,
+    callMethod: 'chat',
+    defaultApiKey: 'ollama',
     color: 'bg-red-500',
   },
   openrouter: {
@@ -93,8 +107,10 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresApiKey: true,
     requiresBaseUrl: false,
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
-    supportsStructuredOutput: true, // generateObject + mode:'json' 사용
+    supportsStructuredOutput: true,
     requiresJsonMode: true,
+    callMethod: 'chat',
+    defaultApiKey: 'ollama',
     color: 'bg-cyan-500',
   },
 
@@ -108,6 +124,8 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     defaultBaseUrl: 'http://localhost:8317',
     supportsStructuredOutput: false,
     requiresJsonMode: false,
+    callMethod: 'chat',
+    defaultApiKey: 'cli-proxy',
     color: 'bg-amber-500',
   },
   'gemini-cli': {
@@ -118,6 +136,7 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresBaseUrl: false,
     supportsStructuredOutput: false,
     requiresJsonMode: false,
+    callMethod: 'direct',
     color: 'bg-teal-500',
   },
 
@@ -129,8 +148,10 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresApiKey: false,
     requiresBaseUrl: false,
     defaultBaseUrl: 'http://localhost:11434',
-    supportsStructuredOutput: false, // Open WebUI 프록시가 response_format을 Ollama에 전달 안 함 → text fallback 필수
+    supportsStructuredOutput: false,
     requiresJsonMode: false,
+    callMethod: 'chat',
+    defaultApiKey: 'ollama',
     color: 'bg-gray-500',
   },
   custom: {
@@ -141,6 +162,8 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresBaseUrl: true,
     supportsStructuredOutput: false,
     requiresJsonMode: false,
+    callMethod: 'chat',
+    defaultApiKey: 'ollama',
     color: 'bg-zinc-500',
   },
 };

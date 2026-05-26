@@ -1,4 +1,4 @@
-import { A as AIProvider } from '../provider-meta-Bo9sv1xo.js';
+import { A as AIProvider } from '../provider-meta-BGU1PhSI.js';
 
 /**
  * 모듈 실행 시 사용할 모델/프로바이더/엔드포인트 정보.

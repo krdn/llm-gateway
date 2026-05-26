@@ -1,7 +1,7 @@
 import * as ai from 'ai';
 import { z } from 'zod';
-import { A as AIProvider } from '../provider-meta-Bo9sv1xo.js';
-export { a as AI_PROVIDER_VALUES, b as AccessMethod, P as PROVIDER_REGISTRY, c as ProviderMeta, g as getProvidersByAccess, i as isProxyCli, n as needsJsonMode, d as needsTextFallback } from '../provider-meta-Bo9sv1xo.js';
+import { A as AIProvider } from '../provider-meta-BGU1PhSI.js';
+export { a as AI_PROVIDER_VALUES, b as AccessMethod, C as CallMethod, P as PROVIDER_REGISTRY, c as ProviderMeta, g as getProvidersByAccess, i as isProxyCli, n as needsJsonMode, d as needsTextFallback } from '../provider-meta-BGU1PhSI.js';
 
 /** AI SDK 프로바이더별 usage 필드명 차이를 정규화 */
 interface NormalizedUsage {

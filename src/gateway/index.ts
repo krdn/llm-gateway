@@ -15,5 +15,6 @@ export {
   needsTextFallback,
   needsJsonMode,
   type AccessMethod,
+  type CallMethod,
   type ProviderMeta,
 } from './provider-meta';

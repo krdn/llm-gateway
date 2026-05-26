@@ -1,4 +1,4 @@
-import { generateText, generateObject } from 'ai';
+import { generateText, generateObject, type LanguageModel } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -6,6 +6,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import type { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
+  PROVIDER_REGISTRY,
   needsTextFallback as checkNeedsTextFallback,
   needsJsonMode as checkNeedsJsonMode,
   type AIProvider,
@@ -22,7 +23,6 @@ export interface NormalizedUsage {
 
 export function normalizeUsage(usage: Record<string, unknown> | undefined | null): NormalizedUsage {
   if (!usage) return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-  // Anthropic/Gemini: inputTokens/outputTokens, OpenAI: promptTokens/completionTokens
   const inputTokens =
     (typeof usage.promptTokens === 'number' ? usage.promptTokens : 0) ||
     (typeof usage.inputTokens === 'number' ? usage.inputTokens : 0);
@@ -54,14 +54,24 @@ const DEFAULT_MODELS: Partial<Record<AIProvider, string>> = {
   deepseek: 'deepseek-chat',
 };
 
-/** 프로바이더별 기본 Base URL */
-const DEFAULT_BASE_URLS: Partial<Record<AIProvider, string>> = {
-  openai: 'https://api.openai.com/v1',
-  deepseek: 'https://api.deepseek.com/v1',
-  xai: 'https://api.x.ai/v1',
-  openrouter: 'https://openrouter.ai/api/v1',
-  ollama: 'http://localhost:11434/v1',
+type SdkFactory = (opts: { apiKey?: string; baseURL?: string }) => unknown;
+
+/** 네이티브 SDK가 있는 프로바이더만 매핑. 나머지는 createOpenAI 폴백. */
+const SDK_MAP: Partial<Record<AIProvider, SdkFactory>> = {
+  anthropic: (opts) => createAnthropic(opts),
+  gemini: (opts) => createGoogleGenerativeAI(opts),
+  openai: (opts) => createOpenAI(opts),
 };
+
+/** chat 방식 프로바이더의 baseUrl에 /v1 suffix를 보장한다. */
+function resolveBaseUrlForChat(provider: AIProvider, baseUrl?: string): string {
+  if (baseUrl) {
+    const cleaned = baseUrl.replace(/\/+$/, '');
+    return cleaned.endsWith('/v1') ? cleaned : `${cleaned}/v1`;
+  }
+  const defaultUrl = PROVIDER_REGISTRY[provider].defaultBaseUrl ?? 'http://localhost:11434';
+  return defaultUrl.endsWith('/v1') ? defaultUrl : `${defaultUrl}/v1`;
+}
 
 export async function getModel(
   provider: AIProvider,
@@ -73,70 +83,31 @@ export async function getModel(
   console.log(
     `[llm-gateway] getModel: provider=${provider}, model=${modelName}, baseUrl=${baseUrl ?? 'none'}, hasApiKey=${!!apiKey}`,
   );
-  switch (provider) {
-    case 'anthropic': {
-      const client = createAnthropic({
-        ...(apiKey ? { apiKey } : {}),
-        ...(baseUrl ? { baseURL: baseUrl } : {}),
-      });
-      return client(modelName);
-    }
-    case 'gemini': {
-      const client = createGoogleGenerativeAI({
-        ...(apiKey ? { apiKey } : {}),
-        ...(baseUrl ? { baseURL: baseUrl } : {}),
-      });
-      return client(modelName);
-    }
-    case 'gemini-cli': {
-      // Gemini CLI OAuth 인증 — API 키 불필요 (무료 쿼터 사용)
-      const { createGeminiProvider } = await import('ai-sdk-provider-gemini-cli');
-      const client = createGeminiProvider({
-        authType: 'oauth-personal',
-      });
-      return client(modelName);
-    }
-    case 'claude-cli': {
-      // Claude CLI Proxy — OpenAI 호환 Chat Completions API 사용 (/v1/chat/completions)
-      // cli-proxy-api는 /v1/messages가 아닌 /v1/chat/completions 엔드포인트만 지원
-      const proxyBaseUrl = baseUrl ? baseUrl.replace(/\/+$/, '') : 'http://localhost:8317';
-      const resolvedUrl = proxyBaseUrl.endsWith('/v1') ? proxyBaseUrl : `${proxyBaseUrl}/v1`;
-      const client = createOpenAI({
-        baseURL: resolvedUrl,
-        apiKey: apiKey || 'cli-proxy',
-      });
-      return client.chat(modelName);
-    }
-    case 'ollama':
-    case 'deepseek':
-    case 'xai':
-    case 'openrouter':
-    case 'custom': {
-      // OpenAI 호환 프로바이더 — Chat Completions API 사용 (/v1/chat/completions)
-      // 중요: client(modelName)은 Responses API(/v1/responses)를 사용하므로 405 발생 가능
-      // client.chat(modelName)을 사용해야 Chat Completions API로 요청됨
-      let resolvedBaseUrl: string;
-      if (baseUrl) {
-        const cleaned = baseUrl.replace(/\/+$/, '');
-        resolvedBaseUrl = cleaned.endsWith('/v1') ? cleaned : `${cleaned}/v1`;
-      } else {
-        resolvedBaseUrl = DEFAULT_BASE_URLS[provider] ?? 'http://localhost:11434/v1';
-      }
-      const client = createOpenAI({
-        baseURL: resolvedBaseUrl,
-        apiKey: apiKey || 'ollama',
-      });
-      return client.chat(modelName);
-    }
-    case 'openai':
-    default: {
-      const client = createOpenAI({
-        ...(apiKey ? { apiKey } : {}),
-        ...(baseUrl ? { baseURL: baseUrl } : {}),
-      });
-      return client(modelName);
-    }
+
+  // gemini-cli: 동적 import (OAuth 인증, API 키 불필요)
+  if (provider === 'gemini-cli') {
+    const { createGeminiProvider } = await import('ai-sdk-provider-gemini-cli');
+    return createGeminiProvider({ authType: 'oauth-personal' })(modelName) as LanguageModel;
   }
+
+  const meta = PROVIDER_REGISTRY[provider];
+  const sdkFactory: SdkFactory = SDK_MAP[provider] ?? ((opts) => createOpenAI(opts));
+
+  const sdkOpts: { apiKey?: string; baseURL?: string } = {};
+
+  if (meta.callMethod === 'chat') {
+    sdkOpts.baseURL = resolveBaseUrlForChat(provider, baseUrl);
+    sdkOpts.apiKey = apiKey || meta.defaultApiKey;
+  } else {
+    if (apiKey) sdkOpts.apiKey = apiKey;
+    if (baseUrl) sdkOpts.baseURL = baseUrl;
+  }
+
+  const client = sdkFactory(sdkOpts) as ReturnType<typeof createOpenAI>;
+
+  return (meta.callMethod === 'chat'
+    ? client.chat(modelName)
+    : (client as unknown as (m: string) => LanguageModel)(modelName)) as LanguageModel;
 }
 
 /**

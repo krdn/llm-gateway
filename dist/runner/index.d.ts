@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { A as AIProvider } from '../provider-meta-Bo9sv1xo.js';
+import { A as AIProvider } from '../provider-meta-BGU1PhSI.js';
 import { NormalizedUsage } from '../gateway/index.js';
 import { ModelConfigAdapter, PipelineControlAdapter, ConcurrencyAdapter } from '../adapters/index.js';
 import 'ai';
