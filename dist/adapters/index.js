@@ -60,27 +60,6 @@ var noopPipelineControl = {
   }
 };
 
-// src/adapters/concurrency.ts
-var DEFAULT_LIMITS = {
-  gemini: 2,
-  anthropic: 3,
-  openai: 2,
-  "gemini-cli": 1,
-  "claude-cli": 1,
-  ollama: 1,
-  deepseek: 2,
-  xai: 2,
-  openrouter: 2,
-  custom: 1
-};
-function createStaticConcurrency(limits = {}) {
-  return {
-    async getLimit(provider) {
-      return limits[provider] ?? DEFAULT_LIMITS[provider] ?? 1;
-    }
-  };
-}
-
-export { createInMemoryModelConfig, createStaticConcurrency, noopPipelineControl };
+export { createInMemoryModelConfig, noopPipelineControl };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

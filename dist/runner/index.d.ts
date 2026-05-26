@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { A as AIProvider } from '../provider-meta-BGU1PhSI.js';
 import { NormalizedUsage } from '../gateway/index.js';
-import { ModelConfigAdapter, PipelineControlAdapter, ConcurrencyAdapter } from '../adapters/index.js';
+import { ModelConfigAdapter, PipelineControlAdapter } from '../adapters/index.js';
 import 'ai';
 
 type ProviderType = AIProvider;
@@ -126,15 +126,6 @@ interface ProgressEvent {
  */
 declare function runModule<TInput, TResult>(module: AnalysisModule<TInput, TResult>, input: TInput, options: RunModuleOptions<TInput>, priorResults?: Record<string, unknown>): Promise<AnalysisModuleResult<TResult>>;
 
-/**
- * 모듈 배열을 프로바이더별로 그룹화하여 동시성을 제어한다.
- *
- * - 같은 프로바이더의 모듈은 어댑터가 정의한 limit만큼만 동시 실행
- * - 다른 프로바이더는 서로 독립 (전부 병렬)
- * - 각 모듈의 결과는 PromiseSettledResult로 반환 (부분 실패 허용)
- */
-declare function runWithProviderGrouping<M extends AnalysisModule<unknown, unknown>>(modules: M[], runner: (module: M) => Promise<AnalysisModuleResult>, concurrency: ConcurrencyAdapter): Promise<PromiseSettledResult<AnalysisModuleResult>[]>;
-
 /** Rate limit 에러 감지 (재시도 가능한 에러) */
 declare function isRateLimitError(error: unknown): boolean;
 /** 서버 일시 장애 감지 (rate limit과 분리 — 별도 재시도 정책 적용) */
@@ -145,4 +136,4 @@ declare function parseRetryAfter(error: unknown): number;
 declare function sleep(ms: number): Promise<void>;
 declare const MAX_RATE_LIMIT_RETRIES = 5;
 
-export { type AnalysisInputMeta as A, MAX_RATE_LIMIT_RETRIES, type ProviderType as P, type PersistEvent, type ProgressEvent, type RunModuleOptions, type AnalysisModule as a, type AnalysisModuleResult as b, isRateLimitError, isServerOverloadError, parseRetryAfter, runModule, runWithProviderGrouping, sleep };
+export { type AnalysisInputMeta as A, MAX_RATE_LIMIT_RETRIES, type ProviderType as P, type PersistEvent, type ProgressEvent, type RunModuleOptions, type AnalysisModule as a, type AnalysisModuleResult as b, isRateLimitError, isServerOverloadError, parseRetryAfter, runModule, sleep };

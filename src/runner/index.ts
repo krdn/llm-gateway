@@ -4,7 +4,6 @@ export {
   type PersistEvent,
   type ProgressEvent,
 } from './run-module';
-export { runWithProviderGrouping } from './concurrency';
 export {
   isRateLimitError,
   isServerOverloadError,

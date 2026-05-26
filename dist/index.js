@@ -474,27 +474,6 @@ var noopPipelineControl = {
   }
 };
 
-// src/adapters/concurrency.ts
-var DEFAULT_LIMITS = {
-  gemini: 2,
-  anthropic: 3,
-  openai: 2,
-  "gemini-cli": 1,
-  "claude-cli": 1,
-  ollama: 1,
-  deepseek: 2,
-  xai: 2,
-  openrouter: 2,
-  custom: 1
-};
-function createStaticConcurrency(limits = {}) {
-  return {
-    async getLimit(provider) {
-      return limits[provider] ?? DEFAULT_LIMITS[provider] ?? 1;
-    }
-  };
-}
-
 // src/runner/retry-utils.ts
 function isRateLimitError(error) {
   const msg = error instanceof Error ? error.message : String(error);
@@ -626,40 +605,6 @@ ${errorStack}`);
   }
 }
 
-// src/runner/concurrency.ts
-async function runWithProviderGrouping(modules, runner, concurrency) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const m of modules) {
-    const list = groups.get(m.provider) ?? [];
-    list.push(m);
-    groups.set(m.provider, list);
-  }
-  const groupPromises = Array.from(groups.entries()).map(async ([provider, mods]) => {
-    const limit = await concurrency.getLimit(provider);
-    const results = [];
-    for (let i = 0; i < mods.length; i += limit) {
-      const batch = mods.slice(i, i + limit);
-      const batchResults = await Promise.allSettled(batch.map((m) => runner(m)));
-      results.push(...batchResults);
-    }
-    return { provider, results };
-  });
-  const allResults = await Promise.all(groupPromises);
-  const moduleNameToResult = /* @__PURE__ */ new Map();
-  for (const { provider, results } of allResults) {
-    const groupModules = groups.get(provider);
-    groupModules.forEach((m, idx) => {
-      moduleNameToResult.set(m.name, results[idx]);
-    });
-  }
-  return modules.map(
-    (m) => moduleNameToResult.get(m.name) ?? {
-      status: "rejected",
-      reason: new Error(`module ${m.name} produced no result`)
-    }
-  );
-}
-
-export { AI_PROVIDER_VALUES, MAX_RATE_LIMIT_RETRIES, PROVIDER_REGISTRY, analyzeStructured, analyzeText, createInMemoryModelConfig, createStaticConcurrency, getProvidersByAccess, isProxyCli, isRateLimitError, isServerOverloadError, needsJsonMode, needsTextFallback, noopPipelineControl, normalizeUsage, parseRetryAfter, runModule, runWithProviderGrouping, sleep };
+export { AI_PROVIDER_VALUES, MAX_RATE_LIMIT_RETRIES, PROVIDER_REGISTRY, analyzeStructured, analyzeText, createInMemoryModelConfig, getProvidersByAccess, isProxyCli, isRateLimitError, isServerOverloadError, needsJsonMode, needsTextFallback, noopPipelineControl, normalizeUsage, parseRetryAfter, runModule, sleep };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

@@ -59,10 +59,4 @@ interface PipelineControlAdapter {
 }
 declare const noopPipelineControl: PipelineControlAdapter;
 
-interface ConcurrencyAdapter {
-    /** 동시 실행 가능한 모듈 수 (프로바이더별) */
-    getLimit(provider: AIProvider): Promise<number>;
-}
-declare function createStaticConcurrency(limits?: Partial<Record<AIProvider, number>>): ConcurrencyAdapter;
-
-export { type ConcurrencyAdapter, type InMemoryModelConfigOptions, type ModelConfigAdapter, type PipelineControlAdapter, type ResolvedModelConfig, createInMemoryModelConfig, createStaticConcurrency, noopPipelineControl };
+export { type InMemoryModelConfigOptions, type ModelConfigAdapter, type PipelineControlAdapter, type ResolvedModelConfig, createInMemoryModelConfig, noopPipelineControl };
