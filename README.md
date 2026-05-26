@@ -1,4 +1,6 @@
-# @krdn/ai-analysis-kit
+# @krdn/llm-gateway
+
+> **Note**: This package was previously published as `@krdn/ai-analysis-kit`. v3.0.0 is a rename with no API changes from v2.0.1.
 
 도메인 무관 AI 분석 러너. 다중 프로바이더 게이트웨이, 제네릭 모듈 엔진, 어댑터 인터페이스를 제공합니다. 어떤 도메인이든 자기 입력 타입과 Zod 결과 스키마로 `AnalysisModule`을 정의해 `runModule()`로 실행할 수 있습니다.
 
@@ -54,7 +56,7 @@ v1.x에서 12개 모듈을 사용하던 프로젝트는 모듈/스키마 정의�
 ```json
 {
   "dependencies": {
-    "@krdn/ai-analysis-kit": "github:krdn/ai-analysis-kit#v2.0.0"
+    "@krdn/llm-gateway": "github:krdn/ai-analysis-kit#v3.0.0"
   }
 }
 ```
@@ -65,7 +67,7 @@ v1.x에서 12개 모듈을 사용하던 프로젝트는 모듈/스키마 정의�
 
 ```ts
 import { z } from 'zod';
-import type { AnalysisModule } from '@krdn/ai-analysis-kit';
+import type { AnalysisModule } from '@krdn/llm-gateway';
 
 interface MyInput {
   jobId: number;
@@ -94,7 +96,7 @@ const summarizerModule: AnalysisModule<MyInput, MyResult> = {
 ### 2. 모듈 실행
 
 ```ts
-import { runModule, createInMemoryModelConfig } from '@krdn/ai-analysis-kit';
+import { runModule, createInMemoryModelConfig } from '@krdn/llm-gateway';
 
 const configAdapter = createInMemoryModelConfig({
   // 환경변수 ANTHROPIC_API_KEY 자동 사용
@@ -116,7 +118,7 @@ if (result.status === 'completed') {
 ### 3. 커스텀 ModelConfigAdapter (DB 기반)
 
 ```ts
-import type { ModelConfigAdapter } from '@krdn/ai-analysis-kit';
+import type { ModelConfigAdapter } from '@krdn/llm-gateway';
 
 const dbAdapter: ModelConfigAdapter = {
   async resolve(moduleName) {
@@ -153,7 +155,7 @@ await runModule(summarizerModule, input, {
 ### 5. 파이프라인 제어 (취소 / 일시정지)
 
 ```ts
-import type { PipelineControlAdapter } from '@krdn/ai-analysis-kit';
+import type { PipelineControlAdapter } from '@krdn/llm-gateway';
 
 const pipelineControl: PipelineControlAdapter = {
   isCancelled: async (jobId) => false,
@@ -168,7 +170,7 @@ await runModule(module, input, { configAdapter, pipelineControl, extractMeta });
 ### 6. 프로바이더별 동시성 제어
 
 ```ts
-import { runWithProviderGrouping, createStaticConcurrency } from '@krdn/ai-analysis-kit';
+import { runWithProviderGrouping, createStaticConcurrency } from '@krdn/llm-gateway';
 
 const concurrency = createStaticConcurrency({ anthropic: 2, gemini: 4 });
 
@@ -200,10 +202,10 @@ const results = await runWithProviderGrouping(
 ### 서브경로
 
 ```ts
-import { ... } from '@krdn/ai-analysis-kit';            // 전체
-import { ... } from '@krdn/ai-analysis-kit/gateway';    // 게이트웨이만
-import { ... } from '@krdn/ai-analysis-kit/runner';     // 러너만
-import { ... } from '@krdn/ai-analysis-kit/adapters';   // 어댑터만
+import { ... } from '@krdn/llm-gateway';            // 전체
+import { ... } from '@krdn/llm-gateway/gateway';    // 게이트웨이만
+import { ... } from '@krdn/llm-gateway/runner';     // 러너만
+import { ... } from '@krdn/llm-gateway/adapters';   // 어댑터만
 ```
 
 ## 라이선스

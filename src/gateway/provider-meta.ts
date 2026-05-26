@@ -129,7 +129,7 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresApiKey: false,
     requiresBaseUrl: false,
     defaultBaseUrl: 'http://localhost:11434',
-    supportsStructuredOutput: false,
+    supportsStructuredOutput: false, // Open WebUI 프록시가 response_format을 Ollama에 전달 안 함 → text fallback 필수
     requiresJsonMode: false,
     color: 'bg-gray-500',
   },

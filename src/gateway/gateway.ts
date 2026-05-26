@@ -71,7 +71,7 @@ export async function getModel(
 ) {
   const modelName = model ?? DEFAULT_MODELS[provider] ?? 'gpt-4.1-nano';
   console.log(
-    `[ai-gateway] getModel: provider=${provider}, model=${modelName}, baseUrl=${baseUrl ?? 'none'}, hasApiKey=${!!apiKey}`,
+    `[llm-gateway] getModel: provider=${provider}, model=${modelName}, baseUrl=${baseUrl ?? 'none'}, hasApiKey=${!!apiKey}`,
   );
   switch (provider) {
     case 'anthropic': {
@@ -113,7 +113,7 @@ export async function getModel(
     case 'openrouter':
     case 'custom': {
       // OpenAI 호환 프로바이더 — Chat Completions API 사용 (/v1/chat/completions)
-      // 중요: client(modelName)은 Responses API(/v1/responses)를 사용하므로 Ollama에서 405 발생
+      // 중요: client(modelName)은 Responses API(/v1/responses)를 사용하므로 405 발생 가능
       // client.chat(modelName)을 사용해야 Chat Completions API로 요청됨
       let resolvedBaseUrl: string;
       if (baseUrl) {
@@ -353,7 +353,13 @@ function repairTruncatedJson(json: string): string {
   return trimmed;
 }
 
-// generateText + Zod 파싱으로 structured output 대체
+/**
+ * generateText + Zod 파싱으로 structured output 대체.
+ *
+ * 2단계 파이프라인:
+ *   1단계: 원래 프롬프트로 분석 (JSON 출력 요청)
+ *   2단계: 1단계 응답이 JSON이 아니면, 텍스트를 JSON으로 변환하는 전용 호출
+ */
 async function analyzeStructuredViaText<T>(
   prompt: string,
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
@@ -364,51 +370,119 @@ async function analyzeStructuredViaText<T>(
   let schemaBlock = '';
   try {
     const jsonSchema = zodToJsonSchema(schema, { target: 'openApi3' });
-    schemaBlock = `\n\n응답 JSON Schema:\n${JSON.stringify(jsonSchema, null, 2)}`;
+    schemaBlock = JSON.stringify(jsonSchema, null, 2);
   } catch {
     /* 변환 실패 시 스키마 힌트 없이 진행 */
   }
-  const jsonInstruction = `${schemaBlock}\n\n반드시 위 JSON Schema 구조에 정확히 맞는 유효한 JSON으로만 응답하세요. 마크다운 코드블록, 설명 텍스트, 주석 없이 순수 JSON 객체만 출력하세요. 모든 필수 필드를 빠짐없이 포함하되, 각 텍스트 필드는 2~3문장 이내로 간결하게 작성하세요. JSON이 잘리지 않도록 전체 응답을 완결된 형태로 출력하세요.`;
-  const systemWithJson = (options.systemPrompt ?? '') + jsonInstruction;
 
-  // 호출 실패는 호출자(runModule)에서 일괄 로깅 — 여기서는 그대로 전파
+  // ── 1단계: 분석 수행 (JSON 출력 시도) ──
+  const systemWithJsonHint = (options.systemPrompt ?? '') + `
+
+IMPORTANT: Respond in valid JSON format only. Start with { and end with }.`;
+
+  const promptWithSchema = `${prompt}
+
+---
+Respond as a JSON object matching this schema:
+${schemaBlock}
+
+Output JSON only. Start with {.`;
+
   const result = await generateText({
     model,
-    system: systemWithJson,
-    prompt,
+    system: systemWithJsonHint,
+    prompt: promptWithSchema,
     maxOutputTokens: options.maxOutputTokens ?? 4096,
     abortSignal,
   });
 
   console.log(
-    `[ai-gateway] analyzeStructuredViaText: 응답 수신 (finishReason=${result.finishReason}, 텍스트 길이=${result.text.length})`,
+    `[llm-gateway] analyzeStructuredViaText [step 1]: 응답 수신 (finishReason=${result.finishReason}, 텍스트 길이=${result.text.length})`,
   );
 
-  // 토큰 초과로 응답이 잘린 경우 경고
   if (result.finishReason === 'length') {
     console.warn(
-      `[ai-gateway] 응답이 토큰 제한으로 잘림 (finishReason=length, 텍스트 길이=${result.text.length}) — JSON 복구 시도`,
+      `[llm-gateway] 응답이 토큰 제한으로 잘림 (finishReason=length) — JSON 복구 시도`,
     );
   }
 
-  const jsonStr = extractJson(result.text);
+  // 1단계 결과에서 JSON 추출 시도
+  const step1Result = tryParseAndValidate(result.text, schema);
+  if (step1Result) {
+    return { object: step1Result, usage: result.usage, finishReason: result.finishReason };
+  }
+
+  // ── 2단계: 텍스트 → JSON 변환 전용 호출 ──
+  console.log(`[llm-gateway] 1단계 JSON 파싱 실패 → 2단계 변환 호출`);
+
+  // 변환 전용 시스템 프롬프트 (분석 역할 제거, 순수 변환기)
+  const converterSystem = `You are a text-to-JSON converter.
+Your ONLY job is to convert the given analysis text into a JSON object.
+Rules:
+- Output ONLY valid JSON. Nothing else.
+- First character: {  Last character: }
+- No markdown, no explanations, no code blocks.
+- Extract information from the text and map it to the schema fields.
+- If information is missing, use reasonable defaults ("" for strings, 0 for numbers, [] for arrays).`;
+
+  const analysisSnippet = result.text.substring(0, 2000);
+  const converterPrompt = `Convert this analysis into JSON:
+
+"""
+${analysisSnippet}
+"""
+
+Target JSON schema:
+${schemaBlock}
+
+Output the JSON object now:`;
+
+  const step2 = await generateText({
+    model,
+    system: converterSystem,
+    prompt: converterPrompt,
+    maxOutputTokens: options.maxOutputTokens ?? 4096,
+    abortSignal,
+  });
+
+  console.log(
+    `[llm-gateway] analyzeStructuredViaText [step 2]: 응답 수신 (finishReason=${step2.finishReason}, 텍스트 길이=${step2.text.length})`,
+  );
+
+  // 2단계 결과에서 JSON 추출
+  const step2Result = tryParseAndValidate(step2.text, schema);
+  if (step2Result) {
+    console.log(`[llm-gateway] 2단계 변환 성공`);
+    // usage는 두 호출 합산
+    const u1 = result.usage as unknown as Record<string, number> | undefined;
+    const u2 = step2.usage as unknown as Record<string, number> | undefined;
+    const totalUsage = {
+      promptTokens: (u1?.promptTokens ?? 0) + (u2?.promptTokens ?? 0),
+      completionTokens: (u1?.completionTokens ?? 0) + (u2?.completionTokens ?? 0),
+    };
+    return { object: step2Result, usage: totalUsage, finishReason: step2.finishReason };
+  }
+
+  // 모두 실패
+  console.error(`[llm-gateway] 2단계 변환도 실패 — 원본 (처음 500자): ${step2.text.substring(0, 500)}`);
+  throw new Error(
+    `JSON 파싱 실패: 2단계 변환 후에도 유효한 JSON을 생성하지 못함\n응답 텍스트 (처음 500자): ${step2.text.substring(0, 500)}`,
+  );
+}
+
+/** JSON 추출 → 파싱 → Zod 검증. 실패 시 null 반환. */
+function tryParseAndValidate<T>(
+  text: string,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+): T | null {
+  if (!text || text.trim().length === 0) return null;
+
+  const jsonStr = extractJson(text);
   let parsed: unknown;
   try {
     parsed = JSON.parse(jsonStr);
-  } catch (e) {
-    const truncatedHint =
-      result.finishReason === 'length'
-        ? ' [원인: 응답이 토큰 제한(maxOutputTokens)으로 잘림 — maxOutputTokens 증가 권장]'
-        : '';
-    console.error(
-      `[ai-gateway] JSON 파싱 실패 — finishReason=${result.finishReason}, 텍스트 길이=${result.text.length}${truncatedHint}`,
-    );
-    console.error(`[ai-gateway] 추출된 JSON (처음 500자): ${jsonStr.substring(0, 500)}`);
-    console.error(`[ai-gateway] 원본 응답 (처음 500자): ${result.text.substring(0, 500)}`);
-    throw new Error(
-      `JSON 파싱 실패${truncatedHint}: ${e instanceof Error ? e.message : String(e)}\n응답 텍스트 (처음 500자): ${result.text.substring(0, 500)}`,
-      { cause: e },
-    );
+  } catch {
+    return null;
   }
 
   const validated = schema.safeParse(parsed);
@@ -416,16 +490,8 @@ async function analyzeStructuredViaText<T>(
     const issues = validated.error.issues
       .map((i) => `${i.path.join('.')}: ${i.message}`)
       .join(', ');
-    console.error(`[ai-gateway] Zod 검증 실패 — ${issues}`);
-    console.error(
-      `[ai-gateway] 파싱된 JSON 키: ${typeof parsed === 'object' && parsed ? Object.keys(parsed).join(', ') : 'N/A'}`,
-    );
-    throw new Error(`JSON 스키마 검증 실패: ${issues}`);
+    console.warn(`[llm-gateway] Zod 검증 실패: ${issues}`);
+    return null;
   }
-
-  return {
-    object: validated.data,
-    usage: result.usage,
-    finishReason: result.finishReason,
-  };
+  return validated.data;
 }

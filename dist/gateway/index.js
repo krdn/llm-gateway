@@ -105,6 +105,7 @@ var PROVIDER_REGISTRY = {
     requiresBaseUrl: false,
     defaultBaseUrl: "http://localhost:11434",
     supportsStructuredOutput: false,
+    // Open WebUI 프록시가 response_format을 Ollama에 전달 안 함 → text fallback 필수
     requiresJsonMode: false,
     color: "bg-gray-500"
   },
@@ -157,7 +158,7 @@ var DEFAULT_BASE_URLS = {
 async function getModel(provider, model, baseUrl, apiKey) {
   const modelName = model ?? DEFAULT_MODELS[provider] ?? "gpt-4.1-nano";
   console.log(
-    `[ai-gateway] getModel: provider=${provider}, model=${modelName}, baseUrl=${baseUrl ?? "none"}, hasApiKey=${!!apiKey}`
+    `[llm-gateway] getModel: provider=${provider}, model=${modelName}, baseUrl=${baseUrl ?? "none"}, hasApiKey=${!!apiKey}`
   );
   switch (provider) {
     case "anthropic": {
@@ -336,62 +337,101 @@ async function analyzeStructuredViaText(prompt, schema, model, options, abortSig
   let schemaBlock = "";
   try {
     const jsonSchema = zodToJsonSchema(schema, { target: "openApi3" });
-    schemaBlock = `
-
-\uC751\uB2F5 JSON Schema:
-${JSON.stringify(jsonSchema, null, 2)}`;
+    schemaBlock = JSON.stringify(jsonSchema, null, 2);
   } catch {
   }
-  const jsonInstruction = `${schemaBlock}
+  const systemWithJsonHint = (options.systemPrompt ?? "") + `
 
-\uBC18\uB4DC\uC2DC \uC704 JSON Schema \uAD6C\uC870\uC5D0 \uC815\uD655\uD788 \uB9DE\uB294 \uC720\uD6A8\uD55C JSON\uC73C\uB85C\uB9CC \uC751\uB2F5\uD558\uC138\uC694. \uB9C8\uD06C\uB2E4\uC6B4 \uCF54\uB4DC\uBE14\uB85D, \uC124\uBA85 \uD14D\uC2A4\uD2B8, \uC8FC\uC11D \uC5C6\uC774 \uC21C\uC218 JSON \uAC1D\uCCB4\uB9CC \uCD9C\uB825\uD558\uC138\uC694. \uBAA8\uB4E0 \uD544\uC218 \uD544\uB4DC\uB97C \uBE60\uC9D0\uC5C6\uC774 \uD3EC\uD568\uD558\uB418, \uAC01 \uD14D\uC2A4\uD2B8 \uD544\uB4DC\uB294 2~3\uBB38\uC7A5 \uC774\uB0B4\uB85C \uAC04\uACB0\uD558\uAC8C \uC791\uC131\uD558\uC138\uC694. JSON\uC774 \uC798\uB9AC\uC9C0 \uC54A\uB3C4\uB85D \uC804\uCCB4 \uC751\uB2F5\uC744 \uC644\uACB0\uB41C \uD615\uD0DC\uB85C \uCD9C\uB825\uD558\uC138\uC694.`;
-  const systemWithJson = (options.systemPrompt ?? "") + jsonInstruction;
+IMPORTANT: Respond in valid JSON format only. Start with { and end with }.`;
+  const promptWithSchema = `${prompt}
+
+---
+Respond as a JSON object matching this schema:
+${schemaBlock}
+
+Output JSON only. Start with {.`;
   const result = await generateText({
     model,
-    system: systemWithJson,
-    prompt,
+    system: systemWithJsonHint,
+    prompt: promptWithSchema,
     maxOutputTokens: options.maxOutputTokens ?? 4096,
     abortSignal
   });
   console.log(
-    `[ai-gateway] analyzeStructuredViaText: \uC751\uB2F5 \uC218\uC2E0 (finishReason=${result.finishReason}, \uD14D\uC2A4\uD2B8 \uAE38\uC774=${result.text.length})`
+    `[llm-gateway] analyzeStructuredViaText [step 1]: \uC751\uB2F5 \uC218\uC2E0 (finishReason=${result.finishReason}, \uD14D\uC2A4\uD2B8 \uAE38\uC774=${result.text.length})`
   );
   if (result.finishReason === "length") {
     console.warn(
-      `[ai-gateway] \uC751\uB2F5\uC774 \uD1A0\uD070 \uC81C\uD55C\uC73C\uB85C \uC798\uB9BC (finishReason=length, \uD14D\uC2A4\uD2B8 \uAE38\uC774=${result.text.length}) \u2014 JSON \uBCF5\uAD6C \uC2DC\uB3C4`
+      `[llm-gateway] \uC751\uB2F5\uC774 \uD1A0\uD070 \uC81C\uD55C\uC73C\uB85C \uC798\uB9BC (finishReason=length) \u2014 JSON \uBCF5\uAD6C \uC2DC\uB3C4`
     );
   }
-  const jsonStr = extractJson(result.text);
+  const step1Result = tryParseAndValidate(result.text, schema);
+  if (step1Result) {
+    return { object: step1Result, usage: result.usage, finishReason: result.finishReason };
+  }
+  console.log(`[llm-gateway] 1\uB2E8\uACC4 JSON \uD30C\uC2F1 \uC2E4\uD328 \u2192 2\uB2E8\uACC4 \uBCC0\uD658 \uD638\uCD9C`);
+  const converterSystem = `You are a text-to-JSON converter.
+Your ONLY job is to convert the given analysis text into a JSON object.
+Rules:
+- Output ONLY valid JSON. Nothing else.
+- First character: {  Last character: }
+- No markdown, no explanations, no code blocks.
+- Extract information from the text and map it to the schema fields.
+- If information is missing, use reasonable defaults ("" for strings, 0 for numbers, [] for arrays).`;
+  const analysisSnippet = result.text.substring(0, 2e3);
+  const converterPrompt = `Convert this analysis into JSON:
+
+"""
+${analysisSnippet}
+"""
+
+Target JSON schema:
+${schemaBlock}
+
+Output the JSON object now:`;
+  const step2 = await generateText({
+    model,
+    system: converterSystem,
+    prompt: converterPrompt,
+    maxOutputTokens: options.maxOutputTokens ?? 4096,
+    abortSignal
+  });
+  console.log(
+    `[llm-gateway] analyzeStructuredViaText [step 2]: \uC751\uB2F5 \uC218\uC2E0 (finishReason=${step2.finishReason}, \uD14D\uC2A4\uD2B8 \uAE38\uC774=${step2.text.length})`
+  );
+  const step2Result = tryParseAndValidate(step2.text, schema);
+  if (step2Result) {
+    console.log(`[llm-gateway] 2\uB2E8\uACC4 \uBCC0\uD658 \uC131\uACF5`);
+    const u1 = result.usage;
+    const u2 = step2.usage;
+    const totalUsage = {
+      promptTokens: (u1?.promptTokens ?? 0) + (u2?.promptTokens ?? 0),
+      completionTokens: (u1?.completionTokens ?? 0) + (u2?.completionTokens ?? 0)
+    };
+    return { object: step2Result, usage: totalUsage, finishReason: step2.finishReason };
+  }
+  console.error(`[llm-gateway] 2\uB2E8\uACC4 \uBCC0\uD658\uB3C4 \uC2E4\uD328 \u2014 \uC6D0\uBCF8 (\uCC98\uC74C 500\uC790): ${step2.text.substring(0, 500)}`);
+  throw new Error(
+    `JSON \uD30C\uC2F1 \uC2E4\uD328: 2\uB2E8\uACC4 \uBCC0\uD658 \uD6C4\uC5D0\uB3C4 \uC720\uD6A8\uD55C JSON\uC744 \uC0DD\uC131\uD558\uC9C0 \uBABB\uD568
+\uC751\uB2F5 \uD14D\uC2A4\uD2B8 (\uCC98\uC74C 500\uC790): ${step2.text.substring(0, 500)}`
+  );
+}
+function tryParseAndValidate(text, schema) {
+  if (!text || text.trim().length === 0) return null;
+  const jsonStr = extractJson(text);
   let parsed;
   try {
     parsed = JSON.parse(jsonStr);
-  } catch (e) {
-    const truncatedHint = result.finishReason === "length" ? " [\uC6D0\uC778: \uC751\uB2F5\uC774 \uD1A0\uD070 \uC81C\uD55C(maxOutputTokens)\uC73C\uB85C \uC798\uB9BC \u2014 maxOutputTokens \uC99D\uAC00 \uAD8C\uC7A5]" : "";
-    console.error(
-      `[ai-gateway] JSON \uD30C\uC2F1 \uC2E4\uD328 \u2014 finishReason=${result.finishReason}, \uD14D\uC2A4\uD2B8 \uAE38\uC774=${result.text.length}${truncatedHint}`
-    );
-    console.error(`[ai-gateway] \uCD94\uCD9C\uB41C JSON (\uCC98\uC74C 500\uC790): ${jsonStr.substring(0, 500)}`);
-    console.error(`[ai-gateway] \uC6D0\uBCF8 \uC751\uB2F5 (\uCC98\uC74C 500\uC790): ${result.text.substring(0, 500)}`);
-    throw new Error(
-      `JSON \uD30C\uC2F1 \uC2E4\uD328${truncatedHint}: ${e instanceof Error ? e.message : String(e)}
-\uC751\uB2F5 \uD14D\uC2A4\uD2B8 (\uCC98\uC74C 500\uC790): ${result.text.substring(0, 500)}`,
-      { cause: e }
-    );
+  } catch {
+    return null;
   }
   const validated = schema.safeParse(parsed);
   if (!validated.success) {
     const issues = validated.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ");
-    console.error(`[ai-gateway] Zod \uAC80\uC99D \uC2E4\uD328 \u2014 ${issues}`);
-    console.error(
-      `[ai-gateway] \uD30C\uC2F1\uB41C JSON \uD0A4: ${typeof parsed === "object" && parsed ? Object.keys(parsed).join(", ") : "N/A"}`
-    );
-    throw new Error(`JSON \uC2A4\uD0A4\uB9C8 \uAC80\uC99D \uC2E4\uD328: ${issues}`);
+    console.warn(`[llm-gateway] Zod \uAC80\uC99D \uC2E4\uD328: ${issues}`);
+    return null;
   }
-  return {
-    object: validated.data,
-    usage: result.usage,
-    finishReason: result.finishReason
-  };
+  return validated.data;
 }
 
 export { AI_PROVIDER_VALUES, PROVIDER_REGISTRY, analyzeStructured, analyzeText, getProvidersByAccess, isProxyCli, needsJsonMode, needsTextFallback, normalizeUsage };

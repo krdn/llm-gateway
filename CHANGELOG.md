@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.0.0 (2026-05-26)
+
+### Package Rename
+
+패키지명을 `@krdn/ai-analysis-kit`에서 `@krdn/llm-gateway`로 변경.
+LLM 게이트웨이 본연의 역할을 반영하는 이름으로 통일.
+
+- API 변경 없음 (v2.0.1과 동일)
+- dead import 제거 (`ollama-ai-provider-v2` — 실제로는 OpenAI 호환 경로 사용)
+- 로그 프리픽스 `[ai-gateway]` → `[llm-gateway]`
+- `@krdn/ai-analysis-kit`은 deprecated
+
+
 ## 2.0.0 (2026-04-08)
 
 ### BREAKING CHANGES
@@ -37,7 +50,7 @@
 
 ```ts
 // Before (v1.x)
-import { runModule, macroViewModule, type AnalysisInput } from '@krdn/ai-analysis-kit';
+import { runModule, macroViewModule, type AnalysisInput } from '@krdn/llm-gateway';
 
 const input: AnalysisInput = {
   jobId: 1,
@@ -52,7 +65,7 @@ await runModule(macroViewModule, input, { configAdapter });
 
 // After (v2.0.0)
 // 1) 모듈 정의를 자기 프로젝트로 이전
-import { runModule } from '@krdn/ai-analysis-kit';
+import { runModule } from '@krdn/llm-gateway';
 import { macroViewModule } from './my-modules';  // 로컬 정의
 import type { MyAnalysisInput } from './my-types';
 

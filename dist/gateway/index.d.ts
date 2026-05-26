@@ -52,7 +52,18 @@ declare function analyzeText(prompt: string, options?: AIGatewayOptions): Promis
  * @returns `{ object, usage, finishReason }`
  */
 declare function analyzeStructured<T>(prompt: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>, options?: AIGatewayOptions): Promise<{
-    object: T;
+    object: NonNullable<T>;
+    usage: ai.LanguageModelUsage;
+    finishReason: ai.FinishReason;
+} | {
+    object: NonNullable<T>;
+    usage: {
+        promptTokens: number;
+        completionTokens: number;
+    };
+    finishReason: ai.FinishReason;
+} | {
+    object: (T extends string ? "enum" : "object") extends infer T_1 ? T_1 extends (T extends string ? "enum" : "object") ? T_1 extends "array" ? T[] : T : never : never;
     usage: ai.LanguageModelUsage;
     finishReason: ai.FinishReason;
 }>;

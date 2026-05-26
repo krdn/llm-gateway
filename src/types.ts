@@ -1,4 +1,4 @@
-// @krdn/ai-analysis-kit — 도메인 무관 타입 정의
+// @krdn/llm-gateway — common types
 //
 // v2.0.0 BREAKING CHANGES
 //   - AnalysisModule<T>가 AnalysisModule<TInput, TResult>로 제네릭화됨

@@ -1,4 +1,4 @@
-// @ai-signalcraft/ai-gateway - AI 분석 게이트웨이 패키지
+// @krdn/llm-gateway — multi-provider LLM gateway
 export {
   analyzeText,
   analyzeStructured,

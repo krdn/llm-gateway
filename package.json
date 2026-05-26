@@ -1,13 +1,13 @@
 {
-  "name": "@krdn/ai-analysis-kit",
-  "version": "2.0.1",
-  "description": "Domain-agnostic AI analysis runner — provider gateway, generic module engine, and adapter interfaces for building multi-provider LLM analysis pipelines.",
+  "name": "@krdn/llm-gateway",
+  "version": "3.0.0",
+  "description": "Multi-provider LLM gateway — unified interface for Anthropic, OpenAI, Gemini, DeepSeek, Ollama, and more. Structured output with JSON repair, retry with backoff, token normalization.",
   "type": "module",
   "license": "MIT",
   "author": "krdn",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/krdn/ai-analysis-kit.git"
+    "url": "git+https://github.com/krdn/llm-gateway.git"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -70,13 +70,17 @@
     "node": ">=20"
   },
   "keywords": [
-    "ai",
     "llm",
-    "analysis-runner",
+    "ai",
+    "gateway",
+    "multi-provider",
     "claude",
-    "gemini",
     "openai",
+    "gemini",
+    "deepseek",
+    "ollama",
     "vercel-ai-sdk",
-    "multi-provider"
+    "structured-output",
+    "json-repair"
   ]
 }
