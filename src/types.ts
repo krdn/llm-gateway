@@ -28,8 +28,6 @@ export interface AnalysisModule<TInput = unknown, TResult = unknown> {
 
   buildPrompt(data: TInput): string;
   buildSystemPrompt(): string;
-  /** 선행 분석 결과가 필요한 모듈용 (Stage 2+) */
-  buildPromptWithContext?(data: TInput, priorResults: Record<string, unknown>): string;
 }
 
 /** 분석 모듈 실행 결과 */
