@@ -195,7 +195,11 @@ jobs:
           labels: dependencies
 ```
 
-### 3단계: Dependabot 설정 (백업)
+### 3단계: Dependabot 또는 Renovate 설정 (백업)
+
+둘 중 하나만 선택합니다. Renovate가 더 세밀한 제어를 제공합니다.
+
+#### Option A: Dependabot
 
 `.github/dependabot.yml` 파일을 생성합니다:
 
@@ -213,6 +217,39 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 ```
+
+#### Option B: Renovate (권장)
+
+`.github/renovate.json` 파일을 생성합니다:
+
+```json
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "matchPackageNames": ["@krdn/llm-gateway"],
+      "automerge": true,
+      "automergeType": "pr",
+      "schedule": ["at any time"],
+      "rangeStrategy": "bump",
+      "labels": ["dependencies", "automerge"]
+    }
+  ]
+}
+```
+
+Renovate를 사용하려면 GitHub repo에 [Renovate App](https://github.com/apps/renovate)을 설치해야 합니다.
+
+**Renovate 주요 옵션 설명:**
+
+| 옵션 | 값 | 설명 |
+|------|-----|------|
+| `automerge` | `true` | CI 통과 시 자동 머지 |
+| `schedule` | `["at any time"]` | 새 버전 감지 즉시 PR 생성 |
+| `rangeStrategy` | `"bump"` | `^3.3.0` → `^3.4.0`으로 범위 갱신 |
+
+자동 머지를 원하지 않으면 `automerge: false`로 변경합니다.
 
 ---
 
