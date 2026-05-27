@@ -1,0 +1,66 @@
+# ============================================================
+# ai-signalcraft 레포에 복사할 워크플로우 템플릿
+# 경로: .github/workflows/update-llm-gateway.yml
+# ============================================================
+name: Update LLM Gateway
+
+on:
+  repository_dispatch:
+    types: [llm-gateway-updated]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Update @krdn/llm-gateway
+        run: |
+          VERSION="${{ github.event.client_payload.version }}"
+          # v 접두사 제거
+          NPM_VERSION="${VERSION#v}"
+
+          echo "Updating @krdn/llm-gateway to ${NPM_VERSION}"
+
+          # 모노레포 내 모든 패키지에서 업데이트
+          pnpm --filter "apps/web" add "@krdn/llm-gateway@^${NPM_VERSION}"
+          pnpm --filter "packages/core" add "@krdn/llm-gateway@^${NPM_VERSION}"
+
+          # lockfile 갱신
+          pnpm install
+
+      - name: Run tests
+        run: pnpm test
+        continue-on-error: true
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/update-llm-gateway-${{ github.event.client_payload.version }}
+          title: "chore(deps): update @krdn/llm-gateway to ${{ github.event.client_payload.version }}"
+          body: |
+            ## Summary
+            - `@krdn/llm-gateway` 새 버전 ${{ github.event.client_payload.version }} 자동 업데이트
+
+            ## Changes
+            - `apps/web/package.json` 의존성 업데이트
+            - `packages/core/package.json` 의존성 업데이트
+            - `pnpm-lock.yaml` 갱신
+
+            > 이 PR은 [llm-gateway publish 워크플로우](https://github.com/krdn/llm-gateway/actions)에 의해 자동 생성되었습니다.
+          commit-message: "chore(deps): update @krdn/llm-gateway to ${{ github.event.client_payload.version }}"
+          delete-branch: true

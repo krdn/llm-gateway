@@ -1,0 +1,51 @@
+name: Publish & Notify Consumers
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  notify-consumers:
+    needs: publish
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        repo:
+          - krdn/ai-signalcraft
+    steps:
+      - name: Dispatch update event to ${{ matrix.repo }}
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
+          repository: ${{ matrix.repo }}
+          event-type: llm-gateway-updated
+          client-payload: |
+            {
+              "version": "${{ github.event.release.tag_name }}",
+              "npm_version": "${{ github.event.release.tag_name }}"
+            }
