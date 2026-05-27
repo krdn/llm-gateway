@@ -1,0 +1,17 @@
+name: Notify consumers on release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify-gons-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch update event to gons-dashboard
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.CONSUMER_DISPATCH_PAT }}
+          repository: krdn/gons-dashboard
+          event-type: llm-gateway-release
+          client-payload: '{"tag": "${{ github.event.release.tag_name }}"}'
