@@ -23,13 +23,7 @@ import type {
   AnalysisInputMeta,
   AnalysisModuleResult,
 } from '../types';
-import {
-  isRateLimitError,
-  isServerOverloadError,
-  parseRetryAfter,
-  sleep,
-  MAX_RATE_LIMIT_RETRIES,
-} from './retry-utils';
+import { retryWithPolicy } from './retry-utils';
 
 /**
  * runModule 옵션 (v2.0.0)
@@ -93,13 +87,11 @@ export interface ProgressEvent {
  * @param module 실행할 분석 모듈
  * @param input 모듈에 전달할 입력 데이터
  * @param options 어댑터 + 콜백 옵션
- * @param priorResults 선행 모듈 결과 (Stage 2+ 모듈의 컨텍스트)
  */
 export async function runModule<TInput, TResult>(
   module: AnalysisModule<TInput, TResult>,
   input: TInput,
   options: RunModuleOptions<TInput>,
-  priorResults?: Record<string, unknown>,
 ): Promise<AnalysisModuleResult<TResult>> {
   const pipelineControl = options.pipelineControl ?? noopPipelineControl;
   const onPersist = options.onPersist ?? (async () => undefined);
@@ -126,10 +118,7 @@ export async function runModule<TInput, TResult>(
 
     const config: ResolvedModelConfig = await options.configAdapter.resolve(module.name);
 
-    const prompt =
-      priorResults && module.buildPromptWithContext
-        ? module.buildPromptWithContext(input, priorResults)
-        : module.buildPrompt(input);
+    const prompt = module.buildPrompt(input);
 
     const gatewayOptions: AIGatewayOptions = {
       provider: config.provider,
@@ -140,82 +129,48 @@ export async function runModule<TInput, TResult>(
       maxOutputTokens: config.maxOutputTokens ?? 8192,
     };
 
-    for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
-      // 매 시도 전 취소 확인
-      if (await pipelineControl.isCancelled(jobId)) {
-        onProgress({
-          module: module.name,
-          phase: 'fail',
-          message: '취소됨',
-        });
-        return {
-          module: module.name,
-          status: 'failed',
-          errorMessage: '사용자에 의해 중지됨',
-        };
-      }
-      await pipelineControl.waitIfPaused(jobId);
+    const result = await retryWithPolicy(
+      () => analyzeStructured(prompt, module.schema, gatewayOptions),
+      {
+        shouldAbort: () => pipelineControl.isCancelled(jobId),
+        onRetry: async ({ attempt, backoffMs, type }) => {
+          await pipelineControl.waitIfPaused(jobId);
+          const msg = type === 'rate-limit'
+            ? `${module.name}: Rate limit, ${Math.round(backoffMs / 1000)}초 후 재시도 (${attempt})`
+            : `${module.name}: 서버 과부하, ${Math.round(backoffMs / 1000)}초 후 재시도`;
+          onProgress({ module: module.name, phase: 'retry', message: msg, attempt });
+          await pipelineControl.appendEvent(jobId, 'warn', msg).catch(() => undefined);
+        },
+      },
+    );
 
-      try {
-        const result = await analyzeStructured(prompt, module.schema, gatewayOptions);
+    const moduleResult: AnalysisModuleResult<TResult> = {
+      module: module.name,
+      status: 'completed',
+      result: result.object,
+      usage: {
+        ...normalizeUsage(result.usage as Record<string, unknown>),
+        provider: config.provider,
+        model: config.model,
+      },
+    };
 
-        const moduleResult: AnalysisModuleResult<TResult> = {
-          module: module.name,
-          status: 'completed',
-          result: result.object,
-          usage: {
-            ...normalizeUsage(result.usage as Record<string, unknown>),
-            provider: config.provider,
-            model: config.model,
-          },
-        };
-
-        await onPersist({
-          jobId,
-          module: module.name,
-          status: 'completed',
-          result: moduleResult.result,
-          usage: moduleResult.usage!,
-        });
-        onProgress({ module: module.name, phase: 'complete' });
-        return moduleResult;
-      } catch (error) {
-        if (isRateLimitError(error) && attempt < MAX_RATE_LIMIT_RETRIES) {
-          const retryAfterSec = parseRetryAfter(error);
-          const backoffMs = Math.max(retryAfterSec * 1000, (attempt + 1) * 3000);
-          const msg = `${module.name}: Rate limit, ${Math.round(backoffMs / 1000)}초 후 재시도 (${attempt + 1}/${MAX_RATE_LIMIT_RETRIES})`;
-          onProgress({
-            module: module.name,
-            phase: 'retry',
-            message: msg,
-            attempt: attempt + 1,
-          });
-          await pipelineControl
-            .appendEvent(jobId, 'warn', msg)
-            .catch(() => undefined);
-          await sleep(backoffMs);
-          continue;
-        }
-        if (isServerOverloadError(error) && attempt < 1) {
-          const msg = `${module.name}: 서버 과부하, 15초 후 재시도`;
-          onProgress({ module: module.name, phase: 'retry', message: msg, attempt: 1 });
-          await pipelineControl
-            .appendEvent(jobId, 'warn', msg)
-            .catch(() => undefined);
-          await sleep(15_000);
-          continue;
-        }
-        throw error;
-      }
-    }
-    // 루프 내 throw로 빠져나가므로 도달 불가 — 안전망
-    throw new Error(`${module.name}: 재시도 한도 초과`);
+    await onPersist({
+      jobId,
+      module: module.name,
+      status: 'completed',
+      result: moduleResult.result,
+      usage: moduleResult.usage!,
+    });
+    onProgress({ module: module.name, phase: 'complete' });
+    return moduleResult;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const raw = error instanceof Error ? error.message : String(error);
+    const errorMessage = raw === 'aborted' ? '사용자에 의해 중지됨' : raw;
     const errorStack = error instanceof Error ? error.stack : undefined;
 
     onProgress({ module: module.name, phase: 'fail', message: errorMessage });
-    if (errorStack) {
+    if (errorStack && raw !== 'aborted') {
       console.error(`[run-module] ${module.name}: ${errorMessage}\n${errorStack}`);
     }
 

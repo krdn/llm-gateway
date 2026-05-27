@@ -45,3 +45,51 @@ export function isParseError(error: unknown): boolean {
     msg.includes('Failed to parse')
   );
 }
+
+export interface RetryPolicyOptions {
+  maxRateLimitRetries?: number;
+  maxOverloadRetries?: number;
+  overloadBackoffMs?: number;
+  onRetry?: (info: { error: unknown; attempt: number; backoffMs: number; type: 'rate-limit' | 'overload' }) => void | Promise<void>;
+  shouldAbort?: () => boolean | Promise<boolean>;
+  /** @internal 테스트용 sleep 주입 */
+  _sleep?: (ms: number) => Promise<void>;
+}
+
+export async function retryWithPolicy<T>(
+  fn: () => Promise<T>,
+  options?: RetryPolicyOptions,
+): Promise<T> {
+  const maxRateLimit = options?.maxRateLimitRetries ?? MAX_RATE_LIMIT_RETRIES;
+  const maxOverload = options?.maxOverloadRetries ?? 1;
+  const overloadBackoff = options?.overloadBackoffMs ?? 15_000;
+  const wait = options?._sleep ?? sleep;
+
+  let overloadAttempts = 0;
+
+  for (let attempt = 0; attempt <= maxRateLimit; attempt++) {
+    if (options?.shouldAbort && await options.shouldAbort()) {
+      throw new Error('aborted');
+    }
+
+    try {
+      return await fn();
+    } catch (error) {
+      if (isRateLimitError(error) && attempt < maxRateLimit) {
+        const retryAfterSec = parseRetryAfter(error);
+        const backoffMs = Math.max(retryAfterSec * 1000, (attempt + 1) * 3000);
+        await options?.onRetry?.({ error, attempt: attempt + 1, backoffMs, type: 'rate-limit' });
+        await wait(backoffMs);
+        continue;
+      }
+      if (isServerOverloadError(error) && overloadAttempts < maxOverload) {
+        overloadAttempts++;
+        await options?.onRetry?.({ error, attempt: overloadAttempts, backoffMs: overloadBackoff, type: 'overload' });
+        await wait(overloadBackoff);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error('재시도 한도 초과');
+}

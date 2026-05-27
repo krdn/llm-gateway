@@ -496,9 +496,40 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 var MAX_RATE_LIMIT_RETRIES = 5;
+async function retryWithPolicy(fn, options) {
+  const maxRateLimit = options?.maxRateLimitRetries ?? MAX_RATE_LIMIT_RETRIES;
+  const maxOverload = options?.maxOverloadRetries ?? 1;
+  const overloadBackoff = options?.overloadBackoffMs ?? 15e3;
+  const wait = options?._sleep ?? sleep;
+  let overloadAttempts = 0;
+  for (let attempt = 0; attempt <= maxRateLimit; attempt++) {
+    if (options?.shouldAbort && await options.shouldAbort()) {
+      throw new Error("aborted");
+    }
+    try {
+      return await fn();
+    } catch (error) {
+      if (isRateLimitError(error) && attempt < maxRateLimit) {
+        const retryAfterSec = parseRetryAfter(error);
+        const backoffMs = Math.max(retryAfterSec * 1e3, (attempt + 1) * 3e3);
+        await options?.onRetry?.({ error, attempt: attempt + 1, backoffMs, type: "rate-limit" });
+        await wait(backoffMs);
+        continue;
+      }
+      if (isServerOverloadError(error) && overloadAttempts < maxOverload) {
+        overloadAttempts++;
+        await options?.onRetry?.({ error, attempt: overloadAttempts, backoffMs: overloadBackoff, type: "overload" });
+        await wait(overloadBackoff);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("\uC7AC\uC2DC\uB3C4 \uD55C\uB3C4 \uCD08\uACFC");
+}
 
 // src/runner/run-module.ts
-async function runModule(module, input, options, priorResults) {
+async function runModule(module, input, options) {
   const pipelineControl = options.pipelineControl ?? noopPipelineControl;
   const onPersist = options.onPersist ?? (async () => void 0);
   const onProgress = options.onProgress ?? (() => void 0);
@@ -518,7 +549,7 @@ async function runModule(module, input, options, priorResults) {
     await onPersist({ jobId, module: module.name, status: "running" });
     onProgress({ module: module.name, phase: "start" });
     const config = await options.configAdapter.resolve(module.name);
-    const prompt = priorResults && module.buildPromptWithContext ? module.buildPromptWithContext(input, priorResults) : module.buildPrompt(input);
+    const prompt = module.buildPrompt(input);
     const gatewayOptions = {
       provider: config.provider,
       model: config.model,
@@ -527,72 +558,43 @@ async function runModule(module, input, options, priorResults) {
       systemPrompt: module.buildSystemPrompt(),
       maxOutputTokens: config.maxOutputTokens ?? 8192
     };
-    for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
-      if (await pipelineControl.isCancelled(jobId)) {
-        onProgress({
-          module: module.name,
-          phase: "fail",
-          message: "\uCDE8\uC18C\uB428"
-        });
-        return {
-          module: module.name,
-          status: "failed",
-          errorMessage: "\uC0AC\uC6A9\uC790\uC5D0 \uC758\uD574 \uC911\uC9C0\uB428"
-        };
-      }
-      await pipelineControl.waitIfPaused(jobId);
-      try {
-        const result = await analyzeStructured(prompt, module.schema, gatewayOptions);
-        const moduleResult = {
-          module: module.name,
-          status: "completed",
-          result: result.object,
-          usage: {
-            ...normalizeUsage(result.usage),
-            provider: config.provider,
-            model: config.model
-          }
-        };
-        await onPersist({
-          jobId,
-          module: module.name,
-          status: "completed",
-          result: moduleResult.result,
-          usage: moduleResult.usage
-        });
-        onProgress({ module: module.name, phase: "complete" });
-        return moduleResult;
-      } catch (error) {
-        if (isRateLimitError(error) && attempt < MAX_RATE_LIMIT_RETRIES) {
-          const retryAfterSec = parseRetryAfter(error);
-          const backoffMs = Math.max(retryAfterSec * 1e3, (attempt + 1) * 3e3);
-          const msg = `${module.name}: Rate limit, ${Math.round(backoffMs / 1e3)}\uCD08 \uD6C4 \uC7AC\uC2DC\uB3C4 (${attempt + 1}/${MAX_RATE_LIMIT_RETRIES})`;
-          onProgress({
-            module: module.name,
-            phase: "retry",
-            message: msg,
-            attempt: attempt + 1
-          });
+    const result = await retryWithPolicy(
+      () => analyzeStructured(prompt, module.schema, gatewayOptions),
+      {
+        shouldAbort: () => pipelineControl.isCancelled(jobId),
+        onRetry: async ({ attempt, backoffMs, type }) => {
+          await pipelineControl.waitIfPaused(jobId);
+          const msg = type === "rate-limit" ? `${module.name}: Rate limit, ${Math.round(backoffMs / 1e3)}\uCD08 \uD6C4 \uC7AC\uC2DC\uB3C4 (${attempt})` : `${module.name}: \uC11C\uBC84 \uACFC\uBD80\uD558, ${Math.round(backoffMs / 1e3)}\uCD08 \uD6C4 \uC7AC\uC2DC\uB3C4`;
+          onProgress({ module: module.name, phase: "retry", message: msg, attempt });
           await pipelineControl.appendEvent(jobId, "warn", msg).catch(() => void 0);
-          await sleep(backoffMs);
-          continue;
         }
-        if (isServerOverloadError(error) && attempt < 1) {
-          const msg = `${module.name}: \uC11C\uBC84 \uACFC\uBD80\uD558, 15\uCD08 \uD6C4 \uC7AC\uC2DC\uB3C4`;
-          onProgress({ module: module.name, phase: "retry", message: msg, attempt: 1 });
-          await pipelineControl.appendEvent(jobId, "warn", msg).catch(() => void 0);
-          await sleep(15e3);
-          continue;
-        }
-        throw error;
       }
-    }
-    throw new Error(`${module.name}: \uC7AC\uC2DC\uB3C4 \uD55C\uB3C4 \uCD08\uACFC`);
+    );
+    const moduleResult = {
+      module: module.name,
+      status: "completed",
+      result: result.object,
+      usage: {
+        ...normalizeUsage(result.usage),
+        provider: config.provider,
+        model: config.model
+      }
+    };
+    await onPersist({
+      jobId,
+      module: module.name,
+      status: "completed",
+      result: moduleResult.result,
+      usage: moduleResult.usage
+    });
+    onProgress({ module: module.name, phase: "complete" });
+    return moduleResult;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const raw = error instanceof Error ? error.message : String(error);
+    const errorMessage = raw === "aborted" ? "\uC0AC\uC6A9\uC790\uC5D0 \uC758\uD574 \uC911\uC9C0\uB428" : raw;
     const errorStack = error instanceof Error ? error.stack : void 0;
     onProgress({ module: module.name, phase: "fail", message: errorMessage });
-    if (errorStack) {
+    if (errorStack && raw !== "aborted") {
       console.error(`[run-module] ${module.name}: ${errorMessage}
 ${errorStack}`);
     }

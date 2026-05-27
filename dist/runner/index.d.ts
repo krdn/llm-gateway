@@ -19,8 +19,6 @@ interface AnalysisModule<TInput = unknown, TResult = unknown> {
     readonly schema: z.ZodType<TResult, z.ZodTypeDef, unknown>;
     buildPrompt(data: TInput): string;
     buildSystemPrompt(): string;
-    /** 선행 분석 결과가 필요한 모듈용 (Stage 2+) */
-    buildPromptWithContext?(data: TInput, priorResults: Record<string, unknown>): string;
 }
 /** 분석 모듈 실행 결과 */
 interface AnalysisModuleResult<TResult = unknown> {
@@ -122,9 +120,8 @@ interface ProgressEvent {
  * @param module 실행할 분석 모듈
  * @param input 모듈에 전달할 입력 데이터
  * @param options 어댑터 + 콜백 옵션
- * @param priorResults 선행 모듈 결과 (Stage 2+ 모듈의 컨텍스트)
  */
-declare function runModule<TInput, TResult>(module: AnalysisModule<TInput, TResult>, input: TInput, options: RunModuleOptions<TInput>, priorResults?: Record<string, unknown>): Promise<AnalysisModuleResult<TResult>>;
+declare function runModule<TInput, TResult>(module: AnalysisModule<TInput, TResult>, input: TInput, options: RunModuleOptions<TInput>): Promise<AnalysisModuleResult<TResult>>;
 
 /** Rate limit 에러 감지 (재시도 가능한 에러) */
 declare function isRateLimitError(error: unknown): boolean;
