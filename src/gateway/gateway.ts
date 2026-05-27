@@ -1,17 +1,15 @@
-import { generateText, generateObject, type LanguageModel } from 'ai';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
-// gemini-cli: 네이티브/WASM 의존성이 많아 동적 import (워커에서만 사용, 웹 빌드 제외)
+import { generateText, generateObject } from 'ai';
 import type { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
-  PROVIDER_REGISTRY,
   needsTextFallback as checkNeedsTextFallback,
   needsJsonMode as checkNeedsJsonMode,
   type AIProvider,
 } from './provider-meta';
+import { tryParseAndValidate } from './json-repair';
+import { getModel } from './model-factory';
 
+export { getModel } from './model-factory';
 export type { AIProvider };
 
 /** AI SDK 프로바이더별 usage 필드명 차이를 정규화 */
@@ -45,69 +43,6 @@ export interface AIGatewayOptions {
   timeoutMs?: number;
   /** 외부에서 전달하는 AbortSignal (타임아웃과 병합됨) */
   abortSignal?: AbortSignal;
-}
-
-const DEFAULT_MODELS: Partial<Record<AIProvider, string>> = {
-  anthropic: 'claude-sonnet-4-6',
-  openai: 'gpt-4.1-nano',
-  gemini: 'gemini-2.5-flash',
-  deepseek: 'deepseek-chat',
-};
-
-type SdkFactory = (opts: { apiKey?: string; baseURL?: string }) => unknown;
-
-/** 네이티브 SDK가 있는 프로바이더만 매핑. 나머지는 createOpenAI 폴백. */
-const SDK_MAP: Partial<Record<AIProvider, SdkFactory>> = {
-  anthropic: (opts) => createAnthropic(opts),
-  gemini: (opts) => createGoogleGenerativeAI(opts),
-  openai: (opts) => createOpenAI(opts),
-};
-
-/** chat 방식 프로바이더의 baseUrl에 /v1 suffix를 보장한다. */
-function resolveBaseUrlForChat(provider: AIProvider, baseUrl?: string): string {
-  if (baseUrl) {
-    const cleaned = baseUrl.replace(/\/+$/, '');
-    return cleaned.endsWith('/v1') ? cleaned : `${cleaned}/v1`;
-  }
-  const defaultUrl = PROVIDER_REGISTRY[provider].defaultBaseUrl ?? 'http://localhost:11434';
-  return defaultUrl.endsWith('/v1') ? defaultUrl : `${defaultUrl}/v1`;
-}
-
-export async function getModel(
-  provider: AIProvider,
-  model?: string,
-  baseUrl?: string,
-  apiKey?: string,
-) {
-  const modelName = model ?? DEFAULT_MODELS[provider] ?? 'gpt-4.1-nano';
-  console.log(
-    `[llm-gateway] getModel: provider=${provider}, model=${modelName}, baseUrl=${baseUrl ?? 'none'}, hasApiKey=${!!apiKey}`,
-  );
-
-  // gemini-cli: 동적 import (OAuth 인증, API 키 불필요)
-  if (provider === 'gemini-cli') {
-    const { createGeminiProvider } = await import('ai-sdk-provider-gemini-cli');
-    return createGeminiProvider({ authType: 'oauth-personal' })(modelName) as LanguageModel;
-  }
-
-  const meta = PROVIDER_REGISTRY[provider];
-  const sdkFactory: SdkFactory = SDK_MAP[provider] ?? ((opts) => createOpenAI(opts));
-
-  const sdkOpts: { apiKey?: string; baseURL?: string } = {};
-
-  if (meta.callMethod === 'chat') {
-    sdkOpts.baseURL = resolveBaseUrlForChat(provider, baseUrl);
-    sdkOpts.apiKey = apiKey || meta.defaultApiKey;
-  } else {
-    if (apiKey) sdkOpts.apiKey = apiKey;
-    if (baseUrl) sdkOpts.baseURL = baseUrl;
-  }
-
-  const client = sdkFactory(sdkOpts) as ReturnType<typeof createOpenAI>;
-
-  return (meta.callMethod === 'chat'
-    ? client.chat(modelName)
-    : (client as unknown as (m: string) => LanguageModel)(modelName)) as LanguageModel;
 }
 
 /**
@@ -215,114 +150,8 @@ export async function analyzeStructured<T>(
   };
 }
 
-/**
- * LLM 텍스트 응답에서 JSON 문자열을 추출한다.
- *
- * 추출 우선순위:
- *   1. ```json ... ``` 또는 ``` ... ``` 코드블록 내부
- *   2. 최외곽 `{...}` 또는 `[...]`
- *   3. 위 둘 다 실패 시 입력 문자열 전체 (trim)
- *
- * 추출 후 `JSON.parse`로 유효성을 검사하고, 실패 시
- * `repairTruncatedJson()`으로 토큰 초과로 잘린 응답을 복구한다.
- *
- * @internal 테스트용으로만 export — 외부 소비자 사용 금지
- */
-export function extractJson(text: string): string {
-  let json: string;
-  // ```json ... ``` 코드블록 추출
-  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (codeBlockMatch) {
-    json = codeBlockMatch[1].trim();
-  } else {
-    // { ... } 또는 [ ... ] 최외곽 추출
-    const jsonMatch = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-    json = jsonMatch ? jsonMatch[1].trim() : text.trim();
-  }
-
-  // 잘린 JSON 복구 시도 (토큰 초과로 중간에 끊긴 경우)
-  try {
-    JSON.parse(json);
-    return json; // 이미 유효한 JSON
-  } catch {
-    return repairTruncatedJson(json);
-  }
-}
-
-/**
- * 토큰 초과로 잘린 JSON 문자열을 복구한다.
- *
- * 알고리즘:
- *   1. 홀수 개의 `"` (열린 문자열)이 있으면 마지막 미완성 키-값을 잘라냄
- *   2. 마지막 `}`/`]` 뒤에 남은 부분 문자열에 `,`만 있으면 잘라냄
- *   3. 트레일링 쉼표 제거
- *   4. 스택 기반으로 열린 `{`/`[`를 역순으로 닫아 균형 맞춤
- *
- * 모든 에지 케이스를 100% 복구하지는 못하지만,
- * Anthropic/OpenAI 등의 일반적인 토큰 절단 케이스 다수를 처리한다.
- *
- * @internal 테스트용으로만 export — 외부 소비자 사용 금지
- */
-export function repairTruncatedJson(json: string): string {
-  // 마지막 불완전한 속성/원소를 잘라내고 괄호를 닫음
-  // 1) 마지막 완전한 원소 이후를 찾아서 자르기
-  let trimmed = json;
-
-  // 열린 문자열 닫기 (홀수 개의 이스케이프되지 않은 따옴표)
-  const quoteCount = (trimmed.match(/(?<!\\)"/g) || []).length;
-  if (quoteCount % 2 !== 0) {
-    // 마지막 불완전한 문자열 값의 시작 따옴표 이전까지 자르기
-    const lastQuote = trimmed.lastIndexOf('"');
-    const beforeLastQuote = trimmed.lastIndexOf('"', lastQuote - 1);
-    if (beforeLastQuote > 0) {
-      // 마지막 완전한 키-값 쌍 이후의 쉼표까지 포함하여 자르기
-      trimmed = trimmed.substring(0, beforeLastQuote);
-    }
-  }
-
-  // 마지막 불완전한 원소 제거 (쉼표 뒤 불완전한 객체)
-  // 마지막 완전한 }  또는 ] 이후의 쓰레기 제거
-  const lastCloseBrace = Math.max(trimmed.lastIndexOf('}'), trimmed.lastIndexOf(']'));
-  if (lastCloseBrace > 0) {
-    const afterClose = trimmed.substring(lastCloseBrace + 1).trim();
-    if (afterClose.startsWith(',')) {
-      trimmed = trimmed.substring(0, lastCloseBrace + 1);
-    }
-  }
-
-  // 트레일링 쉼표 제거
-  trimmed = trimmed.replace(/,\s*$/, '');
-
-  // 열린 괄호를 역순으로 닫기
-  const stack: string[] = [];
-  let inString = false;
-  let escape = false;
-  for (const ch of trimmed) {
-    if (escape) {
-      escape = false;
-      continue;
-    }
-    if (ch === '\\' && inString) {
-      escape = true;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (ch === '{' || ch === '[') stack.push(ch);
-    if (ch === '}' || ch === ']') stack.pop();
-  }
-
-  // 스택에 남은 열린 괄호를 역순으로 닫기
-  while (stack.length > 0) {
-    const open = stack.pop();
-    trimmed += open === '{' ? '}' : ']';
-  }
-
-  return trimmed;
-}
+// re-export for backwards compatibility (테스트에서 './gateway'로 import)
+export { extractJson, repairTruncatedJson } from './json-repair';
 
 /**
  * generateText + Zod 파싱으로 structured output 대체.
@@ -441,28 +270,3 @@ Output the JSON object now:`;
   );
 }
 
-/** JSON 추출 → 파싱 → Zod 검증. 실패 시 null 반환. */
-function tryParseAndValidate<T>(
-  text: string,
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
-): T | null {
-  if (!text || text.trim().length === 0) return null;
-
-  const jsonStr = extractJson(text);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonStr);
-  } catch {
-    return null;
-  }
-
-  const validated = schema.safeParse(parsed);
-  if (!validated.success) {
-    const issues = validated.error.issues
-      .map((i) => `${i.path.join('.')}: ${i.message}`)
-      .join(', ');
-    console.warn(`[llm-gateway] Zod 검증 실패: ${issues}`);
-    return null;
-  }
-  return validated.data;
-}

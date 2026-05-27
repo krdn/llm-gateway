@@ -1,8 +1,8 @@
 import { generateObject, generateText } from 'ai';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 
 // src/gateway/gateway.ts
 
@@ -141,94 +141,7 @@ function needsJsonMode(provider) {
   return PROVIDER_REGISTRY[provider]?.requiresJsonMode ?? false;
 }
 
-// src/gateway/gateway.ts
-function normalizeUsage(usage) {
-  if (!usage) return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-  const inputTokens = (typeof usage.promptTokens === "number" ? usage.promptTokens : 0) || (typeof usage.inputTokens === "number" ? usage.inputTokens : 0);
-  const outputTokens = (typeof usage.completionTokens === "number" ? usage.completionTokens : 0) || (typeof usage.outputTokens === "number" ? usage.outputTokens : 0);
-  const totalTokens = typeof usage.totalTokens === "number" ? usage.totalTokens : inputTokens + outputTokens;
-  return { inputTokens, outputTokens, totalTokens };
-}
-var DEFAULT_MODELS = {
-  anthropic: "claude-sonnet-4-6",
-  openai: "gpt-4.1-nano",
-  gemini: "gemini-2.5-flash",
-  deepseek: "deepseek-chat"
-};
-var SDK_MAP = {
-  anthropic: (opts) => createAnthropic(opts),
-  gemini: (opts) => createGoogleGenerativeAI(opts),
-  openai: (opts) => createOpenAI(opts)
-};
-function resolveBaseUrlForChat(provider, baseUrl) {
-  if (baseUrl) {
-    const cleaned = baseUrl.replace(/\/+$/, "");
-    return cleaned.endsWith("/v1") ? cleaned : `${cleaned}/v1`;
-  }
-  const defaultUrl = PROVIDER_REGISTRY[provider].defaultBaseUrl ?? "http://localhost:11434";
-  return defaultUrl.endsWith("/v1") ? defaultUrl : `${defaultUrl}/v1`;
-}
-async function getModel(provider, model, baseUrl, apiKey) {
-  const modelName = model ?? DEFAULT_MODELS[provider] ?? "gpt-4.1-nano";
-  console.log(
-    `[llm-gateway] getModel: provider=${provider}, model=${modelName}, baseUrl=${baseUrl ?? "none"}, hasApiKey=${!!apiKey}`
-  );
-  if (provider === "gemini-cli") {
-    const { createGeminiProvider } = await import('ai-sdk-provider-gemini-cli');
-    return createGeminiProvider({ authType: "oauth-personal" })(modelName);
-  }
-  const meta = PROVIDER_REGISTRY[provider];
-  const sdkFactory = SDK_MAP[provider] ?? ((opts) => createOpenAI(opts));
-  const sdkOpts = {};
-  if (meta.callMethod === "chat") {
-    sdkOpts.baseURL = resolveBaseUrlForChat(provider, baseUrl);
-    sdkOpts.apiKey = apiKey || meta.defaultApiKey;
-  } else {
-    if (apiKey) sdkOpts.apiKey = apiKey;
-    if (baseUrl) sdkOpts.baseURL = baseUrl;
-  }
-  const client = sdkFactory(sdkOpts);
-  return meta.callMethod === "chat" ? client.chat(modelName) : client(modelName);
-}
-function mergeAbortSignals(external, timeoutMs) {
-  const timeout = timeoutMs ?? 3e5;
-  if (!external) return AbortSignal.timeout(timeout);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error("timeout")), timeout);
-  external.addEventListener(
-    "abort",
-    () => {
-      clearTimeout(timer);
-      controller.abort(external.reason);
-    },
-    { once: true }
-  );
-  controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
-  return controller.signal;
-}
-async function analyzeStructured(prompt, schema, options = {}) {
-  const provider = options.provider ?? "anthropic";
-  const model = await getModel(provider, options.model, options.baseUrl, options.apiKey);
-  const abortSignal = mergeAbortSignals(options.abortSignal, options.timeoutMs);
-  if (needsTextFallback(provider)) {
-    return analyzeStructuredViaText(prompt, schema, model, options, abortSignal);
-  }
-  const needsJsonMode2 = needsJsonMode(provider);
-  const result = await generateObject({
-    model,
-    ...options.systemPrompt ? { system: options.systemPrompt } : {},
-    prompt,
-    schema,
-    ...needsJsonMode2 ? { mode: "json" } : {},
-    maxOutputTokens: options.maxOutputTokens ?? 4096,
-    abortSignal
-  });
-  return {
-    object: result.object,
-    usage: result.usage,
-    finishReason: result.finishReason
-  };
-}
+// src/gateway/json-repair.ts
 function extractJson(text) {
   let json;
   const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
@@ -288,6 +201,112 @@ function repairTruncatedJson(json) {
     trimmed += open === "{" ? "}" : "]";
   }
   return trimmed;
+}
+function tryParseAndValidate(text, schema) {
+  if (!text || text.trim().length === 0) return null;
+  const jsonStr = extractJson(text);
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+  const validated = schema.safeParse(parsed);
+  if (!validated.success) {
+    const issues = validated.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ");
+    console.warn(`[llm-gateway] Zod \uAC80\uC99D \uC2E4\uD328: ${issues}`);
+    return null;
+  }
+  return validated.data;
+}
+var DEFAULT_MODELS = {
+  anthropic: "claude-sonnet-4-6",
+  openai: "gpt-4.1-nano",
+  gemini: "gemini-2.5-flash",
+  deepseek: "deepseek-chat"
+};
+var SDK_MAP = {
+  anthropic: (opts) => createAnthropic(opts),
+  gemini: (opts) => createGoogleGenerativeAI(opts),
+  openai: (opts) => createOpenAI(opts)
+};
+function resolveBaseUrlForChat(provider, baseUrl) {
+  if (baseUrl) {
+    const cleaned = baseUrl.replace(/\/+$/, "");
+    return cleaned.endsWith("/v1") ? cleaned : `${cleaned}/v1`;
+  }
+  const defaultUrl = PROVIDER_REGISTRY[provider].defaultBaseUrl ?? "http://localhost:11434";
+  return defaultUrl.endsWith("/v1") ? defaultUrl : `${defaultUrl}/v1`;
+}
+async function getModel(provider, model, baseUrl, apiKey) {
+  const modelName = model ?? DEFAULT_MODELS[provider] ?? "gpt-4.1-nano";
+  console.log(
+    `[llm-gateway] getModel: provider=${provider}, model=${modelName}, baseUrl=${baseUrl ?? "none"}, hasApiKey=${!!apiKey}`
+  );
+  if (provider === "gemini-cli") {
+    const { createGeminiProvider } = await import('ai-sdk-provider-gemini-cli');
+    return createGeminiProvider({ authType: "oauth-personal" })(modelName);
+  }
+  const meta = PROVIDER_REGISTRY[provider];
+  const sdkFactory = SDK_MAP[provider] ?? ((opts) => createOpenAI(opts));
+  const sdkOpts = {};
+  if (meta.callMethod === "chat") {
+    sdkOpts.baseURL = resolveBaseUrlForChat(provider, baseUrl);
+    sdkOpts.apiKey = apiKey || meta.defaultApiKey;
+  } else {
+    if (apiKey) sdkOpts.apiKey = apiKey;
+    if (baseUrl) sdkOpts.baseURL = baseUrl;
+  }
+  const client = sdkFactory(sdkOpts);
+  return meta.callMethod === "chat" ? client.chat(modelName) : client(modelName);
+}
+
+// src/gateway/gateway.ts
+function normalizeUsage(usage) {
+  if (!usage) return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  const inputTokens = (typeof usage.promptTokens === "number" ? usage.promptTokens : 0) || (typeof usage.inputTokens === "number" ? usage.inputTokens : 0);
+  const outputTokens = (typeof usage.completionTokens === "number" ? usage.completionTokens : 0) || (typeof usage.outputTokens === "number" ? usage.outputTokens : 0);
+  const totalTokens = typeof usage.totalTokens === "number" ? usage.totalTokens : inputTokens + outputTokens;
+  return { inputTokens, outputTokens, totalTokens };
+}
+function mergeAbortSignals(external, timeoutMs) {
+  const timeout = timeoutMs ?? 3e5;
+  if (!external) return AbortSignal.timeout(timeout);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("timeout")), timeout);
+  external.addEventListener(
+    "abort",
+    () => {
+      clearTimeout(timer);
+      controller.abort(external.reason);
+    },
+    { once: true }
+  );
+  controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+  return controller.signal;
+}
+async function analyzeStructured(prompt, schema, options = {}) {
+  const provider = options.provider ?? "anthropic";
+  const model = await getModel(provider, options.model, options.baseUrl, options.apiKey);
+  const abortSignal = mergeAbortSignals(options.abortSignal, options.timeoutMs);
+  if (needsTextFallback(provider)) {
+    return analyzeStructuredViaText(prompt, schema, model, options, abortSignal);
+  }
+  const needsJsonMode2 = needsJsonMode(provider);
+  const result = await generateObject({
+    model,
+    ...options.systemPrompt ? { system: options.systemPrompt } : {},
+    prompt,
+    schema,
+    ...needsJsonMode2 ? { mode: "json" } : {},
+    maxOutputTokens: options.maxOutputTokens ?? 4096,
+    abortSignal
+  });
+  return {
+    object: result.object,
+    usage: result.usage,
+    finishReason: result.finishReason
+  };
 }
 async function analyzeStructuredViaText(prompt, schema, model, options, abortSignal) {
   let schemaBlock = "";
@@ -371,23 +390,6 @@ Output the JSON object now:`;
     `JSON \uD30C\uC2F1 \uC2E4\uD328: 2\uB2E8\uACC4 \uBCC0\uD658 \uD6C4\uC5D0\uB3C4 \uC720\uD6A8\uD55C JSON\uC744 \uC0DD\uC131\uD558\uC9C0 \uBABB\uD568
 \uC751\uB2F5 \uD14D\uC2A4\uD2B8 (\uCC98\uC74C 500\uC790): ${step2.text.substring(0, 500)}`
   );
-}
-function tryParseAndValidate(text, schema) {
-  if (!text || text.trim().length === 0) return null;
-  const jsonStr = extractJson(text);
-  let parsed;
-  try {
-    parsed = JSON.parse(jsonStr);
-  } catch {
-    return null;
-  }
-  const validated = schema.safeParse(parsed);
-  if (!validated.success) {
-    const issues = validated.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ");
-    console.warn(`[llm-gateway] Zod \uAC80\uC99D \uC2E4\uD328: ${issues}`);
-    return null;
-  }
-  return validated.data;
 }
 
 // src/adapters/pipeline-control.ts
