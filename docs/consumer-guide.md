@@ -100,144 +100,59 @@ llm-gateway에서 새 버전이 릴리스되면, 소비자 프로젝트에 자�
 ```
 llm-gateway에서 GitHub Release 생성
 │
-├─① publish.yml (즉시)
-│   ├─ npm에 자동 publish
-│   └─ 소비자 레포에 dispatch 이벤트 전송 → 즉시 PR 생성
+├─① publish.yml → npm publish (즉시)
+│   └─ notify-consumers.yml 이 소비자 레포에 dispatch 전송 → 즉시 PR 생성
 │
 ├─② Dependabot (매일)
 │   └─ npm 레지스트리에서 새 버전 감지 → PR 생성
 │
 └─③ cron 워크플로우 (매일, 백업)
-    └─ git tag 체크 → PR 생성
+    └─ npm 레지스트리에서 새 버전 확인 → PR 생성
 ```
 
 ### 1단계: llm-gateway 레포에 소비자 등록
 
-`.github/workflows/publish.yml`의 `matrix.repo`에 새 레포를 추가합니다:
+`.github/workflows/notify-consumers.yml`에 새 소비자 레포로의 dispatch를 추가합니다.
+현재는 `krdn/gons-dashboard` 단일 step이므로, 소비자가 여러 개라면 matrix로 전환하세요:
 
 ```yaml
-notify-consumers:
-  needs: publish
-  strategy:
-    matrix:
-      repo:
-        - krdn/ai-signalcraft      # 기존
-        - krdn/새-프로젝트-이름     # ← 추가
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        repo:
+          - krdn/gons-dashboard
+          - krdn/새-소비자-레포   # ← 추가
+    steps:
+      - uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3
+        with:
+          token: ${{ secrets.CONSUMER_DISPATCH_PAT }}
+          repository: ${{ matrix.repo }}
+          event-type: llm-gateway-release
+          client-payload: '{"tag": "${{ github.event.release.tag_name }}"}'
 ```
 
-`CONSUMER_DISPATCH_TOKEN`의 Fine-grained PAT에도 새 레포 접근 권한을 추가해야 합니다:
-
-1. https://github.com/settings/tokens → `llm-gateway-dispatch` 토큰 편집
-2. Repository access에 새 레포 추가
+그리고 `CONSUMER_DISPATCH_PAT` Fine-grained PAT에 새 레포 접근 권한을 추가합니다
+(https://github.com/settings/tokens → 토큰 편집 → Repository access).
 
 ### 2단계: 소비자 레포에 업데이트 워크플로우 추가
 
-`.github/workflows/update-llm-gateway.yml` 파일을 생성합니다:
+`llm-gateway-consumer-setup` 스킬을 실행하면 환경(매니저·node·pnpm 버전)을 감지해
+`.github/workflows/update-llm-gateway.yml`을 자동 생성합니다.
 
-```yaml
-name: Update @krdn/llm-gateway
+수동으로 추가하려면 템플릿을 복사하세요:
+`docs/skills/llm-gateway-consumer-setup/templates/update-llm-gateway.yml`
+(`{{PNPM_VERSION}}` / `{{NODE_VERSION}}`를 프로젝트 값으로 치환)
 
-on:
-  repository_dispatch:
-    types: [llm-gateway-updated]
-  schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
-
-permissions:
-  contents: write
-  pull-requests: write
-
-jobs:
-  check-update:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10      # 프로젝트 pnpm 버전에 맞춰 변경
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20  # 프로젝트 node 버전에 맞춰 변경
-          cache: pnpm
-
-      - name: Update @krdn/llm-gateway
-        id: update
-        run: |
-          CURRENT=$(pnpm list @krdn/llm-gateway --json 2>/dev/null \
-            | grep -oP '"version":\s*"\K[^"]+' | head -1 || echo "0.0.0")
-
-          pnpm update @krdn/llm-gateway
-          pnpm install
-
-          UPDATED=$(pnpm list @krdn/llm-gateway --json 2>/dev/null \
-            | grep -oP '"version":\s*"\K[^"]+' | head -1 || echo "0.0.0")
-
-          if [ "$CURRENT" = "$UPDATED" ]; then
-            echo "needs_pr=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "needs_pr=true" >> "$GITHUB_OUTPUT"
-            echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-            echo "updated=$UPDATED" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create Pull Request
-        if: steps.update.outputs.needs_pr == 'true'
-        uses: peter-evans/create-pull-request@v7
-        with:
-          branch: chore/update-llm-gateway-v${{ steps.update.outputs.updated }}
-          delete-branch: true
-          title: "chore(deps): @krdn/llm-gateway ${{ steps.update.outputs.current }} → ${{ steps.update.outputs.updated }}"
-          body: |
-            `@krdn/llm-gateway` 자동 업데이트
-          labels: dependencies
-```
+> dispatch 계약: 발행자 `notify-consumers.yml`은 `event-type: llm-gateway-release`,
+> payload `{"tag": ...}`를 보냅니다. 워크플로우의 `types:`는 `llm-gateway-release`여야 합니다.
 
 ### 3단계: Dependabot 또는 Renovate 설정 (백업)
 
-둘 중 하나만 선택합니다. Renovate가 더 세밀한 제어를 제공합니다.
-
-#### Option A: Dependabot
-
-`.github/dependabot.yml` 파일을 생성합니다:
-
-```yaml
-version: 2
-updates:
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "daily"
-    allow:
-      - dependency-name: "@krdn/llm-gateway"
-    labels:
-      - dependencies
-    commit-message:
-      prefix: "chore(deps)"
-```
-
-#### Option B: Renovate (권장)
-
-`.github/renovate.json` 파일을 생성합니다:
-
-```json
-{
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "packageRules": [
-    {
-      "matchPackageNames": ["@krdn/llm-gateway"],
-      "automerge": true,
-      "automergeType": "pr",
-      "schedule": ["at any time"],
-      "rangeStrategy": "bump",
-      "labels": ["dependencies", "automerge"]
-    }
-  ]
-}
-```
+템플릿을 복사하세요 (둘 중 하나만):
+- Dependabot: `docs/skills/llm-gateway-consumer-setup/templates/dependabot.yml` → `.github/dependabot.yml`
+- Renovate(권장): `docs/skills/llm-gateway-consumer-setup/templates/renovate.json` → `.github/renovate.json`
 
 Renovate를 사용하려면 GitHub repo에 [Renovate App](https://github.com/apps/renovate)을 설치해야 합니다.
 
