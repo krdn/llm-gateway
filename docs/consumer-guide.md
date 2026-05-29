@@ -100,9 +100,8 @@ llm-gateway에서 새 버전이 릴리스되면, 소비자 프로젝트에 자�
 ```
 llm-gateway에서 GitHub Release 생성
 │
-├─① publish.yml (즉시)
-│   ├─ npm에 자동 publish
-│   └─ 소비자 레포에 dispatch 이벤트 전송 → 즉시 PR 생성
+├─① publish.yml → npm publish (즉시)
+│   └─ notify-consumers.yml 이 소비자 레포에 dispatch 전송 → 즉시 PR 생성
 │
 ├─② Dependabot (매일)
 │   └─ npm 레지스트리에서 새 버전 감지 → PR 생성

@@ -91,36 +91,45 @@ description: >
 - `.github/` 디렉토리 없음 → 워크플로우 생성 전 디렉토리 생성
 - 검증은 가볍게(설치 성공 + 파일 생성 확인 수준). 절차 스킬이므로 스킬 자체 테스트 코드는 만들지 않는다.
 
-## dispatch 계약 (notify-consumers.yml이 진실)
+## dispatch 계약 (두 dispatcher 존재 — 스킬은 신 계약으로 표준화)
 
-소비자 워크플로우의 `types:`와 payload 필드명은 발행자가 보내는 값과 정확히 일치해야 발화한다.
-출처는 `.github/workflows/notify-consumers.yml`이며, 확정값은 다음과 같다:
+라이브러리 레포에는 릴리스 시 소비자에게 dispatch를 보내는 워크플로우가 **둘** 있고, 계약이 갈린다.
+둘 다 `release: published`에 트리거되어 릴리스 1건당 dispatch가 두 번 나간다.
 
-| 항목 | 값 | 비고 |
-|------|-----|------|
-| event-type | `llm-gateway-release` | `llm-gateway-updated` 아님 |
-| payload 필드 | `client_payload.tag` | `client_payload.version` 아님 |
-| secret 이름 | `CONSUMER_DISPATCH_PAT` | `CONSUMER_DISPATCH_TOKEN` 아님 |
+| 항목 | 신 계약 (`notify-consumers.yml`) | 레거시 (`publish.yml`의 notify-consumers 잡) |
+|------|----------------------------------|---------------------------------------------|
+| event-type | `llm-gateway-release` | `llm-gateway-updated` |
+| payload | `client_payload.tag` | `version` + `npm_version` |
+| secret | `CONSUMER_DISPATCH_PAT` | `CONSUMER_DISPATCH_TOKEN` |
+| 대상 | `gons-dashboard` (단일 step) | `ai-signalcraft` (matrix) |
+
+이 스킬은 **신 계약(`notify-consumers.yml`)을 기본값**으로 소비자를 표준화한다. 근거: 신 워크플로우는
+최근 의도적으로 분리·SHA 고정된 standalone이며, 이 브랜치 전체가 그 위에 서 있다. 소비자 템플릿의
+`types: [llm-gateway-release]`와 4단계 체크리스트("notify-consumers.yml에 등록")가 같은 축에서 일관된다.
 
 소비자는 여러 개이므로, `notify-consumers.yml`은 현재 단일 step(`krdn/gons-dashboard`)을
 matrix로 확장해야 한다 (4단계 체크리스트에서 안내).
 
-## 알려진 버그 (스킬과 별개, 보고용)
+## 관련 발견 (스킬 범위 밖, 보고용)
 
-현재 `.github/consumer-workflow-template.yml`은 `llm-gateway-updated` + `client_payload.version`을
-listen/읽지만, 발행자는 `llm-gateway-release` + `tag`를 보낸다. 둘이 어긋나 **현재 dispatch 자동
-업데이트는 발화하지 않는다.** 이번 작업으로 이 파일을 삭제하고 올바른 계약의 `templates/`로 대체한다.
+절반만 끝난 마이그레이션 상태다. `publish.yml`의 notify-consumers 잡이 아직 레거시 계약을
+`ai-signalcraft`로 dispatch한다 → 릴리스마다 이중 dispatch. 또한 `notify-consumers.yml`은 독립
+워크플로우라 `needs: publish`를 걸 수 없어 **publish 완료 전 발화하는 race**가 있다(신 템플릿은
+payload를 읽지 않고 `pnpm update`만 하므로 잠깐 옛 버전을 받을 수 있음 — cron 백업으로 익일 복구).
+마이그레이션을 끝내려면 `publish.yml`의 notify 잡 제거가 필요하나, 이는 별도 CI 정리 작업으로
+이 스킬 범위 밖이다.
 
 ## 단일 진실 공급원 (DRY) 결정
 
-워크플로우/설정의 사본이 현재 3곳에서 drift 중이다:
-1. `.github/consumer-workflow-template.yml` (깨진 계약 + 모노레포 하드코딩)
+소비자 워크플로우/설정의 사본이 현재 3곳에서 drift 중이다:
+1. `.github/consumer-workflow-template.yml` (레거시 계약 + 모노레포 하드코딩)
 2. `docs/consumer-guide.md` 인라인 YAML
 3. (신규) `templates/`
 
 **결정: `templates/`를 단일 소스로 삼는다.**
-- `templates/`의 파일이 진실 공급원이 된다. 계약값은 위 표(notify-consumers.yml)를 따른다.
-- `.github/consumer-workflow-template.yml`은 **삭제**한다 (templates/가 대체).
+- `templates/`의 파일이 진실 공급원이 된다. 계약값은 신 계약(notify-consumers.yml)을 따른다.
+- `.github/consumer-workflow-template.yml`은 **삭제**한다 — 깨져서가 아니라, 신 계약으로 통합하고
+  모노레포 하드코딩을 제거하기 위해. (레거시 dispatcher인 publish.yml 잡 정리는 범위 밖)
 - `consumer-guide.md`의 인라인 YAML 블록은 걷어내고, "이 스킬을 실행" 안내 또는 템플릿 경로 링크로 대체한다.
   (consumer-guide.md 정리는 스킬 구현과 함께 수행 — 동일 변경의 일부)
 
