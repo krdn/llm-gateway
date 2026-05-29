@@ -71,8 +71,9 @@ description: >
 
 ### 4단계 — 라이브러리 레포 등록 체크리스트 출력
 - 파일 생성 없음. 다음 수동 절차를 안내 텍스트로 출력:
-  1. llm-gateway `publish.yml`의 `matrix.repo`에 이 소비자 레포 추가
-  2. `CONSUMER_DISPATCH_TOKEN` Fine-grained PAT에 이 레포 접근 권한 추가
+  1. llm-gateway `.github/workflows/notify-consumers.yml`을 matrix로 확장해 이 소비자 레포를 dispatch 대상에 추가
+     (현재는 `krdn/gons-dashboard` 단일 step. 소비자가 여러 개이므로 matrix 전환 필요)
+  2. `CONSUMER_DISPATCH_PAT` Fine-grained PAT에 이 레포 접근 권한 추가
 - 수동 단계임을 명시한다 (다른 레포 수정 + PAT 설정이라 자동화하지 않음)
 
 ## 핵심 설계 원칙
@@ -90,23 +91,59 @@ description: >
 - `.github/` 디렉토리 없음 → 워크플로우 생성 전 디렉토리 생성
 - 검증은 가볍게(설치 성공 + 파일 생성 확인 수준). 절차 스킬이므로 스킬 자체 테스트 코드는 만들지 않는다.
 
+## dispatch 계약 (notify-consumers.yml이 진실)
+
+소비자 워크플로우의 `types:`와 payload 필드명은 발행자가 보내는 값과 정확히 일치해야 발화한다.
+출처는 `.github/workflows/notify-consumers.yml`이며, 확정값은 다음과 같다:
+
+| 항목 | 값 | 비고 |
+|------|-----|------|
+| event-type | `llm-gateway-release` | `llm-gateway-updated` 아님 |
+| payload 필드 | `client_payload.tag` | `client_payload.version` 아님 |
+| secret 이름 | `CONSUMER_DISPATCH_PAT` | `CONSUMER_DISPATCH_TOKEN` 아님 |
+
+소비자는 여러 개이므로, `notify-consumers.yml`은 현재 단일 step(`krdn/gons-dashboard`)을
+matrix로 확장해야 한다 (4단계 체크리스트에서 안내).
+
+## 알려진 버그 (스킬과 별개, 보고용)
+
+현재 `.github/consumer-workflow-template.yml`은 `llm-gateway-updated` + `client_payload.version`을
+listen/읽지만, 발행자는 `llm-gateway-release` + `tag`를 보낸다. 둘이 어긋나 **현재 dispatch 자동
+업데이트는 발화하지 않는다.** 이번 작업으로 이 파일을 삭제하고 올바른 계약의 `templates/`로 대체한다.
+
 ## 단일 진실 공급원 (DRY) 결정
 
-`docs/consumer-guide.md`에 이미 `update-llm-gateway.yml`, `renovate.json`, `dependabot.yml`
-전문이 인라인되어 있다. 새 `templates/`가 같은 내용을 복제하면 사본이 두 곳이 되어 drift 위험이 있다.
+워크플로우/설정의 사본이 현재 3곳에서 drift 중이다:
+1. `.github/consumer-workflow-template.yml` (깨진 계약 + 모노레포 하드코딩)
+2. `docs/consumer-guide.md` 인라인 YAML
+3. (신규) `templates/`
 
 **결정: `templates/`를 단일 소스로 삼는다.**
-- `templates/`의 파일이 진실 공급원이 된다.
+- `templates/`의 파일이 진실 공급원이 된다. 계약값은 위 표(notify-consumers.yml)를 따른다.
+- `.github/consumer-workflow-template.yml`은 **삭제**한다 (templates/가 대체).
 - `consumer-guide.md`의 인라인 YAML 블록은 걷어내고, "이 스킬을 실행" 안내 또는 템플릿 경로 링크로 대체한다.
   (consumer-guide.md 정리는 스킬 구현과 함께 수행 — 동일 변경의 일부)
+
+## 모노레포 가정 제거
+
+기존 깨진 템플릿은 `pnpm --filter apps/web` / `packages/core`를 하드코딩한다. 범용 스킬은 이를
+가정할 수 없다. `templates/update-llm-gateway.yml`은 가장 단순한 `pnpm update @krdn/llm-gateway`
+(flat·workspace 모두 무난) 하나로 가고, 모노레포 분기는 만들지 않는다 (YAGNI).
 
 ## 구현 도구
 
 `/skillify` 또는 `write-a-skill` / `skill-creator` 스킬을 활용해 SKILL.md를 작성한다
 (frontmatter·트리거 규칙을 강제해 일관성·품질 확보). 설계 자체는 도구와 무관하게 동일하다.
 
+## 범위 안 (이번 작업에 포함)
+
+- `docs/skills/llm-gateway-consumer-setup/` 스킬 소스 전체 (SKILL.md, templates/, INSTALL.md)
+- `.github/consumer-workflow-template.yml` **삭제**
+- `docs/consumer-guide.md` 인라인 YAML 제거 + 템플릿 참조로 정리
+
 ## 범위 밖 (Out of Scope)
 
 - 라이브러리 릴리스 자동화(버전 올리기 + 커밋 + GitHub Release) — 별도 작업
+- `notify-consumers.yml`의 실제 matrix 전환 — 스킬은 안내만, 라이브러리 관리자가 수동 수행
 - 기본 사용 코드 외의 도메인별 모듈 생성
 - 스킬 자체에 대한 테스트 코드
