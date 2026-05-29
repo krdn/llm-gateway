@@ -174,12 +174,19 @@ matrix(gons-dashboard + ai-signalcraft)로 통합. 두 소비자 모두 신 계�
 
 > ✅ dispatcher 통합 완료 — notify-consumers.yml 하나가 gons-dashboard + ai-signalcraft에 신 계약으로 dispatch.
 >
-> ⚠️ 두 가지 수동 확인이 남았습니다 (다른 레포 / secret 설정이라 자동화 불가):
-> 1. `ai-signalcraft` 레포의 소비자 워크플로우를 `types: [llm-gateway-release]`를 듣도록 교체하세요.
->    그 레포에서 `llm-gateway-consumer-setup` 스킬을 실행하면 신 계약 템플릿이 적용됩니다.
->    그 전까지 ai-signalcraft는 dispatch 미발화 (cron 백업이 있으면 동작).
+> 🔴 **ai-signalcraft 자동 업데이트가 지금부터 작동 중단 상태입니다.** 이 변경 전에는
+> publish.yml 레거시 잡(`llm-gateway-updated`)과 ai-signalcraft의 레거시 리스너가 정상 페어로
+> 작동 중이었습니다. 이제 ai-signalcraft는 `llm-gateway-release`를 받지만 그쪽 워크플로우는
+> 여전히 `llm-gateway-updated`를 들으므로 발화하지 않습니다. 삭제된 레거시 템플릿에 cron이
+> 없었던 점으로 보아 **cron 폴백이 없어 자가복구되지 않을 공산이 큽니다** — 다음 릴리스 전에
+> 아래 두 단계를 **반드시** 처리해야 합니다 (다른 레포 / secret 설정이라 자동화 불가):
+> 1. `ai-signalcraft` 레포의 소비자 워크플로우가 ① 어떤 event-type을 듣는지 ② cron이 있는지
+>    확인하고, `types: [llm-gateway-release]`를 듣도록 교체하세요.
+>    그 레포에서 `llm-gateway-consumer-setup` 스킬을 실행하면 신 계약 템플릿(cron 포함)이 적용됩니다.
 > 2. `CONSUMER_DISPATCH_PAT` PAT에 `ai-signalcraft` 접근 권한이 있는지 확인하세요.
 >    (레거시는 `CONSUMER_DISPATCH_TOKEN`을 썼으므로 PAT가 다를 수 있음)
+>
+> 참고: `CONSUMER_DISPATCH_TOKEN` secret은 이제 어디서도 참조되지 않는 고아 상태입니다(무해, 정리 선택).
 
 ---
 
