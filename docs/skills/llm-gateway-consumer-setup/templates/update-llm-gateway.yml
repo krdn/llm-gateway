@@ -32,14 +32,29 @@ jobs:
       - name: Update @krdn/llm-gateway
         id: update
         run: |
-          CURRENT=$(pnpm list @krdn/llm-gateway --json 2>/dev/null \
-            | grep -oP '"version":\s*"\K[^"]+' | head -1 || echo "0.0.0")
+          read_version() {
+            pnpm ls @krdn/llm-gateway --json 2>/dev/null | node -e "
+              let d='';
+              process.stdin.on('data', c => d += c);
+              process.stdin.on('end', () => {
+                let v='0.0.0';
+                try {
+                  const arr = JSON.parse(d);
+                  for (const pkg of arr) {
+                    const dep = (pkg.dependencies && pkg.dependencies['@krdn/llm-gateway'])
+                              || (pkg.devDependencies && pkg.devDependencies['@krdn/llm-gateway']);
+                    if (dep && dep.version) { v = dep.version; break; }
+                  }
+                } catch {}
+                console.log(v);
+              });
+            "
+          }
 
+          CURRENT=$(read_version)
           pnpm update @krdn/llm-gateway
           pnpm install
-
-          UPDATED=$(pnpm list @krdn/llm-gateway --json 2>/dev/null \
-            | grep -oP '"version":\s*"\K[^"]+' | head -1 || echo "0.0.0")
+          UPDATED=$(read_version)
 
           if [ "$CURRENT" = "$UPDATED" ]; then
             echo "needs_pr=false" >> "$GITHUB_OUTPUT"

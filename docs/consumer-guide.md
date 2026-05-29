@@ -107,7 +107,7 @@ llm-gateway에서 GitHub Release 생성
 │   └─ npm 레지스트리에서 새 버전 감지 → PR 생성
 │
 └─③ cron 워크플로우 (매일, 백업)
-    └─ git tag 체크 → PR 생성
+    └─ npm 레지스트리에서 새 버전 확인 → PR 생성
 ```
 
 ### 1단계: llm-gateway 레포에 소비자 등록
