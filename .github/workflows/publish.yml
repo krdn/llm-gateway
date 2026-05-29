@@ -1,4 +1,4 @@
-name: Publish & Notify Consumers
+name: Publish to npm
 
 on:
   release:
@@ -29,23 +29,3 @@ jobs:
       - run: pnpm publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  notify-consumers:
-    needs: publish
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        repo:
-          - krdn/ai-signalcraft
-    steps:
-      - name: Dispatch update event to ${{ matrix.repo }}
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
-          repository: ${{ matrix.repo }}
-          event-type: llm-gateway-updated
-          client-payload: |
-            {
-              "version": "${{ github.event.release.tag_name }}",
-              "npm_version": "${{ github.event.release.tag_name }}"
-            }
