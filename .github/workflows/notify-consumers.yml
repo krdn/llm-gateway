@@ -5,13 +5,18 @@ on:
     types: [published]
 
 jobs:
-  notify-gons-dashboard:
+  notify:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        repo:
+          - krdn/gons-dashboard
+          - krdn/ai-signalcraft
     steps:
-      - name: Dispatch update event to gons-dashboard
+      - name: Dispatch release event to ${{ matrix.repo }}
         uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3
         with:
           token: ${{ secrets.CONSUMER_DISPATCH_PAT }}
-          repository: krdn/gons-dashboard
+          repository: ${{ matrix.repo }}
           event-type: llm-gateway-release
           client-payload: '{"tag": "${{ github.event.release.tag_name }}"}'
