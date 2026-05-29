@@ -1,0 +1,65 @@
+# 이 파일은 @krdn/llm-gateway 소비자 레포에 복사됩니다.
+# 경로: .github/workflows/update-llm-gateway.yml
+# {{PNPM_VERSION}} / {{NODE_VERSION}} 는 설치 시 치환됩니다.
+name: Update @krdn/llm-gateway
+
+on:
+  repository_dispatch:
+    types: [llm-gateway-release]
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: {{PNPM_VERSION}}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: {{NODE_VERSION}}
+          cache: pnpm
+
+      - name: Update @krdn/llm-gateway
+        id: update
+        run: |
+          CURRENT=$(pnpm list @krdn/llm-gateway --json 2>/dev/null \
+            | grep -oP '"version":\s*"\K[^"]+' | head -1 || echo "0.0.0")
+
+          pnpm update @krdn/llm-gateway
+          pnpm install
+
+          UPDATED=$(pnpm list @krdn/llm-gateway --json 2>/dev/null \
+            | grep -oP '"version":\s*"\K[^"]+' | head -1 || echo "0.0.0")
+
+          if [ "$CURRENT" = "$UPDATED" ]; then
+            echo "needs_pr=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_pr=true" >> "$GITHUB_OUTPUT"
+            echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+            echo "updated=$UPDATED" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Pull Request
+        if: steps.update.outputs.needs_pr == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/update-llm-gateway-v${{ steps.update.outputs.updated }}
+          delete-branch: true
+          title: "chore(deps): @krdn/llm-gateway ${{ steps.update.outputs.current }} → ${{ steps.update.outputs.updated }}"
+          commit-message: "chore(deps): @krdn/llm-gateway ${{ steps.update.outputs.updated }}"
+          labels: dependencies
+          body: |
+            `@krdn/llm-gateway` 자동 업데이트 (${{ steps.update.outputs.current }} → ${{ steps.update.outputs.updated }})
+
+            > llm-gateway 릴리스 dispatch(`llm-gateway-release`)로 자동 생성되었습니다.
