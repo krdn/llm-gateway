@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    allow:
+      - dependency-name: "@krdn/llm-gateway"
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"

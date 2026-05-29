@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "matchPackageNames": ["@krdn/llm-gateway"],
+      "automerge": true,
+      "automergeType": "pr",
+      "schedule": ["at any time"],
+      "rangeStrategy": "bump",
+      "labels": ["dependencies", "automerge"]
+    }
+  ]
+}
