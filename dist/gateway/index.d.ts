@@ -1,15 +1,16 @@
+import { N as NormalizedUsage } from '../normalize-usage-fi30gwXT.js';
+export { n as normalizeUsage } from '../normalize-usage-fi30gwXT.js';
 import * as ai from 'ai';
 import { z } from 'zod';
 import { A as AIProvider } from '../provider-meta-BGU1PhSI.js';
 export { a as AI_PROVIDER_VALUES, b as AccessMethod, C as CallMethod, P as PROVIDER_REGISTRY, c as ProviderMeta, g as getProvidersByAccess, i as isProxyCli, n as needsJsonMode, d as needsTextFallback } from '../provider-meta-BGU1PhSI.js';
 
-/** AI SDK 프로바이더별 usage 필드명 차이를 정규화 */
-interface NormalizedUsage {
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
+interface StrategyResult<T> {
+    object: T;
+    usage: NormalizedUsage;
+    finishReason: string;
 }
-declare function normalizeUsage(usage: Record<string, unknown> | undefined | null): NormalizedUsage;
+
 interface AIGatewayOptions {
     provider?: AIProvider;
     model?: string;
@@ -49,23 +50,11 @@ declare function analyzeText(prompt: string, options?: AIGatewayOptions): Promis
  * @param prompt 사용자 프롬프트
  * @param schema 응답을 검증할 Zod 스키마
  * @param options 게이트웨이 옵션
- * @returns `{ object, usage, finishReason }`
+ * @returns `{ object, usage, finishReason }` — usage는 전략(native/text2step)에
+ *          무관하게 항상 정규화된 `NormalizedUsage`({ inputTokens, outputTokens,
+ *          totalTokens }) 형태다. (자유 텍스트용 `analyzeText`는 프로바이더 원본
+ *          usage를 반환하므로 소비자가 `normalizeUsage()`를 호출해야 하는 점과 다름.)
  */
-declare function analyzeStructured<T>(prompt: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>, options?: AIGatewayOptions): Promise<{
-    object: NonNullable<T>;
-    usage: ai.LanguageModelUsage;
-    finishReason: ai.FinishReason;
-} | {
-    object: NonNullable<T>;
-    usage: {
-        promptTokens: number;
-        completionTokens: number;
-    };
-    finishReason: ai.FinishReason;
-} | {
-    object: (T extends string ? "enum" : "object") extends infer T_1 ? T_1 extends (T extends string ? "enum" : "object") ? T_1 extends "array" ? T[] : T : never : never;
-    usage: ai.LanguageModelUsage;
-    finishReason: ai.FinishReason;
-}>;
+declare function analyzeStructured<T>(prompt: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>, options?: AIGatewayOptions): Promise<StrategyResult<T>>;
 
-export { type AIGatewayOptions, AIProvider, type NormalizedUsage, analyzeStructured, analyzeText, normalizeUsage };
+export { type AIGatewayOptions, AIProvider, NormalizedUsage, analyzeStructured, analyzeText };

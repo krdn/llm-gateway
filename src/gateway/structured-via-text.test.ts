@@ -67,9 +67,8 @@ describe('analyzeStructuredViaText (text fallback 파이프라인)', () => {
 
     expect(result.object).toEqual({ summary: '변환 성공', score: 80 });
     expect(generateText).toHaveBeenCalledTimes(2);
-    const usage = result.usage as Record<string, number>;
-    expect(usage.promptTokens).toBe(250);
-    expect(usage.completionTokens).toBe(260);
+    // usage는 이제 NormalizedUsage 단일 형태로 합산됨 (경로 무관 일관성)
+    expect(result.usage).toEqual({ inputTokens: 250, outputTokens: 260, totalTokens: 510 });
   });
 
   it('Step 1, Step 2 모두 실패 시 에러 전파', async () => {

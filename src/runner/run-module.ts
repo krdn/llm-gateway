@@ -6,7 +6,6 @@
 //   - "수집 데이터 없음" 스킵 조건이 articles+videos+comments → meta.itemCount === 0
 import {
   analyzeStructured,
-  normalizeUsage,
   type AIGatewayOptions,
   type NormalizedUsage,
 } from '../gateway';
@@ -149,7 +148,8 @@ export async function runModule<TInput, TResult>(
       status: 'completed',
       result: result.object,
       usage: {
-        ...normalizeUsage(result.usage as Record<string, unknown>),
+        // analyzeStructured가 이미 NormalizedUsage를 반환하므로 재정규화 불필요
+        ...result.usage,
         provider: config.provider,
         model: config.model,
       },

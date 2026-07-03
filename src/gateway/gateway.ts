@@ -1,36 +1,15 @@
-import { generateText, generateObject } from 'ai';
+import { generateText } from 'ai';
 import type { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import {
-  needsTextFallback as checkNeedsTextFallback,
-  needsJsonMode as checkNeedsJsonMode,
-  type AIProvider,
-} from './provider-meta';
-import { tryParseAndValidate } from './json-repair';
+import type { AIProvider } from './provider-meta';
 import { getModel } from './model-factory';
+import { selectStrategy } from './select-strategy';
+import { executeStrategy } from './strategies';
 
 export { getModel } from './model-factory';
 export type { AIProvider };
 
-/** AI SDK 프로바이더별 usage 필드명 차이를 정규화 */
-export interface NormalizedUsage {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-}
-
-export function normalizeUsage(usage: Record<string, unknown> | undefined | null): NormalizedUsage {
-  if (!usage) return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-  const inputTokens =
-    (typeof usage.promptTokens === 'number' ? usage.promptTokens : 0) ||
-    (typeof usage.inputTokens === 'number' ? usage.inputTokens : 0);
-  const outputTokens =
-    (typeof usage.completionTokens === 'number' ? usage.completionTokens : 0) ||
-    (typeof usage.outputTokens === 'number' ? usage.outputTokens : 0);
-  const totalTokens =
-    typeof usage.totalTokens === 'number' ? usage.totalTokens : inputTokens + outputTokens;
-  return { inputTokens, outputTokens, totalTokens };
-}
+// usage 정규화는 별도 모듈로 분리 (strategies.ts와 공유, 순환 의존 방지)
+export { normalizeUsage, type NormalizedUsage } from './normalize-usage';
 
 export interface AIGatewayOptions {
   provider?: AIProvider;
@@ -114,7 +93,10 @@ export async function analyzeText(prompt: string, options: AIGatewayOptions = {}
  * @param prompt 사용자 프롬프트
  * @param schema 응답을 검증할 Zod 스키마
  * @param options 게이트웨이 옵션
- * @returns `{ object, usage, finishReason }`
+ * @returns `{ object, usage, finishReason }` — usage는 전략(native/text2step)에
+ *          무관하게 항상 정규화된 `NormalizedUsage`({ inputTokens, outputTokens,
+ *          totalTokens }) 형태다. (자유 텍스트용 `analyzeText`는 프로바이더 원본
+ *          usage를 반환하므로 소비자가 `normalizeUsage()`를 호출해야 하는 점과 다름.)
  */
 export async function analyzeStructured<T>(
   prompt: string,
@@ -123,150 +105,16 @@ export async function analyzeStructured<T>(
 ) {
   const provider = options.provider ?? 'anthropic';
   const model = await getModel(provider, options.model, options.baseUrl, options.apiKey);
-  const abortSignal = mergeAbortSignals(options.abortSignal, options.timeoutMs);
 
-  // 구조화 출력 미지원 프로바이더(CLI 프록시/Custom/Ollama 등)는
-  // generateText + 프롬프트 기반 JSON 추출 + Zod 파싱으로 처리
-  if (checkNeedsTextFallback(provider)) {
-    return analyzeStructuredViaText(prompt, schema, model, options, abortSignal);
-  }
-
-  // 네이티브 프로바이더 (anthropic, openai, gemini 등) — generateObject 사용
-  const needsJsonMode = checkNeedsJsonMode(provider);
-
-  const result = await generateObject({
-    model,
-    ...(options.systemPrompt ? { system: options.systemPrompt } : {}),
+  // 전략 선택(순수 데이터) → 전략 실행(SDK). provider별 분기는 전략 seam 뒤에 숨는다.
+  return executeStrategy(selectStrategy(provider), model, schema, {
     prompt,
-    schema,
-    ...(needsJsonMode ? { mode: 'json' as const } : {}),
+    ...(options.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
     maxOutputTokens: options.maxOutputTokens ?? 4096,
-    abortSignal,
+    abortSignal: mergeAbortSignals(options.abortSignal, options.timeoutMs),
   });
-  return {
-    object: result.object,
-    usage: result.usage,
-    finishReason: result.finishReason,
-  };
 }
 
 // re-export for backwards compatibility (테스트에서 './gateway'로 import)
 export { extractJson, repairTruncatedJson } from './json-repair';
-
-/**
- * generateText + Zod 파싱으로 structured output 대체.
- *
- * 2단계 파이프라인:
- *   1단계: 원래 프롬프트로 분석 (JSON 출력 요청)
- *   2단계: 1단계 응답이 JSON이 아니면, 텍스트를 JSON으로 변환하는 전용 호출
- */
-async function analyzeStructuredViaText<T>(
-  prompt: string,
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
-  model: Awaited<ReturnType<typeof getModel>>,
-  options: AIGatewayOptions,
-  abortSignal: AbortSignal,
-) {
-  let schemaBlock = '';
-  try {
-    const jsonSchema = zodToJsonSchema(schema, { target: 'openApi3' });
-    schemaBlock = JSON.stringify(jsonSchema, null, 2);
-  } catch {
-    /* 변환 실패 시 스키마 힌트 없이 진행 */
-  }
-
-  // ── 1단계: 분석 수행 (JSON 출력 시도) ──
-  const systemWithJsonHint = (options.systemPrompt ?? '') + `
-
-IMPORTANT: Respond in valid JSON format only. Start with { and end with }.`;
-
-  const promptWithSchema = `${prompt}
-
----
-Respond as a JSON object matching this schema:
-${schemaBlock}
-
-Output JSON only. Start with {.`;
-
-  const result = await generateText({
-    model,
-    system: systemWithJsonHint,
-    prompt: promptWithSchema,
-    maxOutputTokens: options.maxOutputTokens ?? 4096,
-    abortSignal,
-  });
-
-  console.log(
-    `[llm-gateway] analyzeStructuredViaText [step 1]: 응답 수신 (finishReason=${result.finishReason}, 텍스트 길이=${result.text.length})`,
-  );
-
-  if (result.finishReason === 'length') {
-    console.warn(
-      `[llm-gateway] 응답이 토큰 제한으로 잘림 (finishReason=length) — JSON 복구 시도`,
-    );
-  }
-
-  // 1단계 결과에서 JSON 추출 시도
-  const step1Result = tryParseAndValidate(result.text, schema);
-  if (step1Result) {
-    return { object: step1Result, usage: result.usage, finishReason: result.finishReason };
-  }
-
-  // ── 2단계: 텍스트 → JSON 변환 전용 호출 ──
-  console.log(`[llm-gateway] 1단계 JSON 파싱 실패 → 2단계 변환 호출`);
-
-  // 변환 전용 시스템 프롬프트 (분석 역할 제거, 순수 변환기)
-  const converterSystem = `You are a text-to-JSON converter.
-Your ONLY job is to convert the given analysis text into a JSON object.
-Rules:
-- Output ONLY valid JSON. Nothing else.
-- First character: {  Last character: }
-- No markdown, no explanations, no code blocks.
-- Extract information from the text and map it to the schema fields.
-- If information is missing, use reasonable defaults ("" for strings, 0 for numbers, [] for arrays).`;
-
-  const analysisSnippet = result.text.substring(0, 2000);
-  const converterPrompt = `Convert this analysis into JSON:
-
-"""
-${analysisSnippet}
-"""
-
-Target JSON schema:
-${schemaBlock}
-
-Output the JSON object now:`;
-
-  const step2 = await generateText({
-    model,
-    system: converterSystem,
-    prompt: converterPrompt,
-    maxOutputTokens: options.maxOutputTokens ?? 4096,
-    abortSignal,
-  });
-
-  console.log(
-    `[llm-gateway] analyzeStructuredViaText [step 2]: 응답 수신 (finishReason=${step2.finishReason}, 텍스트 길이=${step2.text.length})`,
-  );
-
-  // 2단계 결과에서 JSON 추출
-  const step2Result = tryParseAndValidate(step2.text, schema);
-  if (step2Result) {
-    console.log(`[llm-gateway] 2단계 변환 성공`);
-    // usage는 두 호출 합산
-    const u1 = result.usage as unknown as Record<string, number> | undefined;
-    const u2 = step2.usage as unknown as Record<string, number> | undefined;
-    const totalUsage = {
-      promptTokens: (u1?.promptTokens ?? 0) + (u2?.promptTokens ?? 0),
-      completionTokens: (u1?.completionTokens ?? 0) + (u2?.completionTokens ?? 0),
-    };
-    return { object: step2Result, usage: totalUsage, finishReason: step2.finishReason };
-  }
-
-  // 모두 실패
-  console.error(`[llm-gateway] 2단계 변환도 실패 — 원본 (처음 500자): ${step2.text.substring(0, 500)}`);
-  throw new Error(
-    `JSON 파싱 실패: 2단계 변환 후에도 유효한 JSON을 생성하지 못함\n응답 텍스트 (처음 500자): ${step2.text.substring(0, 500)}`,
-  );
-}
 
