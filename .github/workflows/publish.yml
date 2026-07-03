@@ -12,12 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write # npm provenance 증명 (publishConfig.provenance)
     steps:
       - uses: actions/checkout@v4
+      # pnpm 버전은 package.json의 packageManager 필드에서 읽는다 (단일 출처)
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -26,6 +25,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
-      - run: pnpm publish --access public --no-git-checks
+      - run: pnpm publish --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # 소비자 알림은 publish 성공 이후에만 발송한다
+  # (publish 실패/진행 중 상태에서 소비자가 업데이트를 시도하는 레이스 방지)
+  notify:
+    needs: publish
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        repo:
+          - krdn/gons-dashboard
+          - krdn/ai-signalcraft
+    steps:
+      - name: Dispatch release event to ${{ matrix.repo }}
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3
+        with:
+          token: ${{ secrets.CONSUMER_DISPATCH_PAT }}
+          repository: ${{ matrix.repo }}
+          event-type: llm-gateway-release
+          client-payload: '{"tag": "${{ github.event.release.tag_name }}"}'

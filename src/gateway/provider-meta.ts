@@ -1,6 +1,6 @@
 // 프로바이더 메타데이터 중앙 레지스트리
 // 접근 방식(API/CLI/Local), 필수 필드, 기능 지원 여부를 한 곳에서 관리
-// gateway.ts에서 import하지 않음 — 브라우저 번들에 Node.js 전용 코드가 포함되는 것을 방지
+// SDK를 import하지 않음 — 브라우저 번들에 Node.js 전용 코드가 포함되는 것을 방지
 export type AIProvider =
   | 'anthropic'
   | 'openai'
@@ -21,24 +21,26 @@ export type CallMethod = 'direct' | 'chat';
 
 /** 프로바이더 메타데이터 */
 export interface ProviderMeta {
-  type: AIProvider;
-  displayName: string;
-  accessMethod: AccessMethod;
-  requiresApiKey: boolean;
-  requiresBaseUrl: boolean;
-  defaultBaseUrl?: string;
+  readonly type: AIProvider;
+  readonly displayName: string;
+  readonly accessMethod: AccessMethod;
+  readonly requiresApiKey: boolean;
+  readonly requiresBaseUrl: boolean;
+  readonly defaultBaseUrl?: string;
   /** 구조화 출력(structured output) 네이티브 지원 여부 */
-  supportsStructuredOutput: boolean;
-  /** json mode 필요 여부 (openrouter) */
-  requiresJsonMode: boolean;
+  readonly supportsStructuredOutput: boolean;
   /** SDK 클라이언트 호출 방식: 'direct' = client(model), 'chat' = client.chat(model) */
-  callMethod: CallMethod;
-  /** API 키 미전달 시 기본값 (ollama → 'ollama', claude-cli → 'cli-proxy') */
-  defaultApiKey?: string;
-  color: string;
+  readonly callMethod: CallMethod;
+  /**
+   * API 키 미전달 시 기본값 — 키를 검사하지 않는 로컬/프록시 서버 전용
+   * (ollama → 'ollama', claude-cli → 'cli-proxy'). requiresApiKey: true인
+   * 프로바이더에는 두지 않는다 (가짜 키를 유료 API에 보내는 사고 방지).
+   */
+  readonly defaultApiKey?: string;
+  readonly color: string;
 }
 
-export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
+export const PROVIDER_REGISTRY: Readonly<Record<AIProvider, ProviderMeta>> = {
   // --- 직접 API ---
   anthropic: {
     type: 'anthropic',
@@ -47,7 +49,6 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresApiKey: true,
     requiresBaseUrl: false,
     supportsStructuredOutput: true,
-    requiresJsonMode: false,
     callMethod: 'direct',
     color: 'bg-orange-500',
   },
@@ -59,7 +60,6 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresBaseUrl: false,
     defaultBaseUrl: 'https://api.openai.com/v1',
     supportsStructuredOutput: true,
-    requiresJsonMode: false,
     callMethod: 'direct',
     color: 'bg-green-500',
   },
@@ -70,7 +70,6 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresApiKey: true,
     requiresBaseUrl: false,
     supportsStructuredOutput: true,
-    requiresJsonMode: false,
     callMethod: 'direct',
     color: 'bg-blue-500',
   },
@@ -82,9 +81,7 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresBaseUrl: false,
     defaultBaseUrl: 'https://api.deepseek.com/v1',
     supportsStructuredOutput: true,
-    requiresJsonMode: false,
     callMethod: 'chat',
-    defaultApiKey: 'ollama',
     color: 'bg-purple-500',
   },
   xai: {
@@ -95,9 +92,7 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresBaseUrl: false,
     defaultBaseUrl: 'https://api.x.ai/v1',
     supportsStructuredOutput: true,
-    requiresJsonMode: false,
     callMethod: 'chat',
-    defaultApiKey: 'ollama',
     color: 'bg-red-500',
   },
   openrouter: {
@@ -108,9 +103,7 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresBaseUrl: false,
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
     supportsStructuredOutput: true,
-    requiresJsonMode: true,
     callMethod: 'chat',
-    defaultApiKey: 'ollama',
     color: 'bg-cyan-500',
   },
 
@@ -123,7 +116,6 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresBaseUrl: true,
     defaultBaseUrl: 'http://localhost:8317',
     supportsStructuredOutput: false,
-    requiresJsonMode: false,
     callMethod: 'chat',
     defaultApiKey: 'cli-proxy',
     color: 'bg-amber-500',
@@ -135,7 +127,6 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresApiKey: false,
     requiresBaseUrl: false,
     supportsStructuredOutput: false,
-    requiresJsonMode: false,
     callMethod: 'direct',
     color: 'bg-teal-500',
   },
@@ -149,7 +140,6 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresBaseUrl: false,
     defaultBaseUrl: 'http://localhost:11434',
     supportsStructuredOutput: false,
-    requiresJsonMode: false,
     callMethod: 'chat',
     defaultApiKey: 'ollama',
     color: 'bg-gray-500',
@@ -161,7 +151,6 @@ export const PROVIDER_REGISTRY: Record<AIProvider, ProviderMeta> = {
     requiresApiKey: false,
     requiresBaseUrl: true,
     supportsStructuredOutput: false,
-    requiresJsonMode: false,
     callMethod: 'chat',
     defaultApiKey: 'ollama',
     color: 'bg-zinc-500',
@@ -178,15 +167,10 @@ export function getProvidersByAccess(method: AccessMethod): ProviderMeta[] {
 
 /** Proxy CLI 프로바이더인지 판별 */
 export function isProxyCli(provider: AIProvider): boolean {
-  return PROVIDER_REGISTRY[provider]?.accessMethod === 'proxy-cli';
+  return PROVIDER_REGISTRY[provider].accessMethod === 'proxy-cli';
 }
 
 /** generateObject 미지원 → generateText + JSON 파싱 폴백 필요 */
 export function needsTextFallback(provider: AIProvider): boolean {
-  return !PROVIDER_REGISTRY[provider]?.supportsStructuredOutput;
-}
-
-/** json mode 필요 여부 (openrouter) */
-export function needsJsonMode(provider: AIProvider): boolean {
-  return PROVIDER_REGISTRY[provider]?.requiresJsonMode ?? false;
+  return !PROVIDER_REGISTRY[provider].supportsStructuredOutput;
 }

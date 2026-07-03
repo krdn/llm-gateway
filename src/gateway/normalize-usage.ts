@@ -8,15 +8,23 @@ export interface NormalizedUsage {
   totalTokens: number;
 }
 
-export function normalizeUsage(usage: Record<string, unknown> | undefined | null): NormalizedUsage {
-  if (!usage) return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+/**
+ * usage 객체를 `NormalizedUsage`로 정규화한다.
+ * 인자로 usage 객체 자체를 전달할 것 — 인식 불가능한 값은 0으로 정규화된다.
+ * (v4 필드명 promptTokens/completionTokens와 v5+ inputTokens/outputTokens 모두 지원)
+ */
+export function normalizeUsage(usage: unknown): NormalizedUsage {
+  if (typeof usage !== 'object' || usage === null) {
+    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  }
+  const u = usage as Record<string, unknown>; // 유일한 내부 narrowing 지점
   const inputTokens =
-    (typeof usage.promptTokens === 'number' ? usage.promptTokens : 0) ||
-    (typeof usage.inputTokens === 'number' ? usage.inputTokens : 0);
+    (typeof u.promptTokens === 'number' ? u.promptTokens : 0) ||
+    (typeof u.inputTokens === 'number' ? u.inputTokens : 0);
   const outputTokens =
-    (typeof usage.completionTokens === 'number' ? usage.completionTokens : 0) ||
-    (typeof usage.outputTokens === 'number' ? usage.outputTokens : 0);
+    (typeof u.completionTokens === 'number' ? u.completionTokens : 0) ||
+    (typeof u.outputTokens === 'number' ? u.outputTokens : 0);
   const totalTokens =
-    typeof usage.totalTokens === 'number' ? usage.totalTokens : inputTokens + outputTokens;
+    typeof u.totalTokens === 'number' ? u.totalTokens : inputTokens + outputTokens;
   return { inputTokens, outputTokens, totalTokens };
 }

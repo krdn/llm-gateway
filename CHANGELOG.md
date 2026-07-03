@@ -1,5 +1,87 @@
 # Changelog
 
+## 4.0.0 (2026-07-04)
+
+전면 리팩토링 릴리스 — 침묵 폴백 제거, 타입 강화, 취소/재시도 신뢰성 개선.
+
+### BREAKING CHANGES
+
+- **`AnalysisModuleResult`가 discriminated union으로 변경** (interface → type).
+  `status === 'completed'`로 좁히면 `result`/`usage`가 non-null 보장.
+  `extends AnalysisModuleResult` 하던 코드는 수정 필요.
+- **getModel이 잘못된 설정에 명시적 에러를 던짐** (기존: 침묵 폴백):
+  - 알 수 없는 provider → 에러 (기존: opaque TypeError)
+  - 기본 모델 없는 provider(ollama/xai/openrouter/custom/claude-cli/gemini-cli)에
+    model 미지정 → 에러 (기존: `gpt-4.1-nano`로 폴백)
+  - deepseek/xai/openrouter에 apiKey 미전달 → 에러 (기존: 가짜 키 `'ollama'` 전송 → 401)
+  - `custom`에 baseUrl 미지정 → 에러 (기존: `localhost:11434`로 폴백)
+- **`analyzeText`의 usage 반환 형태 변경**: 프로바이더 원본 필드 + 정규화 필드
+  (`inputTokens`/`outputTokens`/`totalTokens` 항상 숫자) 병합. `AnalyzeTextResult` 타입 신설.
+- **콘솔 로깅 전면 제거** — 라이브러리가 소비자 stdout/stderr를 오염시키지 않음.
+  진단 정보(파싱 실패 사유, finishReason)는 에러 메시지와 `onProgress`로 전달.
+- **`ai-sdk-provider-gemini-cli`가 선택적 peerDependency로 전환** — gemini-cli
+  사용자는 직접 설치 필요 (`pnpm add ai-sdk-provider-gemini-cli`). 미설치 시 안내 에러.
+- **`requiresJsonMode` 필드·`needsJsonMode()` 제거** — AI SDK v6가 structured-output
+  모드를 내부 선택하므로 개념 자체가 소멸.
+- **`PROVIDER_REGISTRY`가 읽기 전용 타입으로 변경** — 레지스트리를 변조하던 코드는 컴파일 에러.
+- **Node 20.3.0 이상 필요** (`AbortSignal.any` 사용).
+
+### 개선 (하위 호환)
+
+- `runModule`: `configAdapter`/`extractMeta`가 선택이 됨 — 미지정 시
+  `module.provider`/`module.model` 사용, skip-on-empty 비활성. 어댑터가 있으면 어댑터 우선.
+- `runModule`: never-throw 정책 완전 보장 — `extractMeta`/`onPersist`/`onProgress`가
+  throw해도 항상 `AnalysisModuleResult` 반환. 분석 성공 후 저장만 실패하면
+  `completed` + `errorMessage`(저장 실패 사유).
+- `runModule`: `pipelineControl.checkCostLimit`이 실제로 호출됨 (false면 실행 전 중단).
+- `runModule`: `abortSignal` 옵션 + `ResolvedModelConfig.timeoutMs` 신설 —
+  취소가 진행 중인 LLM 호출까지 전파됨 (기존: 재시도 사이에서만 체크).
+- `retryWithPolicy`: overload 재시도가 rate limit 예산과 독립된 카운터 사용
+  (기존: overload 재시도 설정이 사실상 무시됨). 예산 소진 시 원본 에러 그대로 전파
+  (기존: `'재시도 한도 초과'` 일반 에러로 감쌌음).
+- `retryWithPolicy`: retry-after 상한(`MAX_RETRY_AFTER_MS`=5분) 신설 —
+  일일 쿼터 소진(retry in 86400s) 시 24시간 잠들지 않고 즉시 실패.
+- 에러 분류가 AI SDK 구조화 에러(`APICallError.statusCode`, `RetryError` 래핑 해제,
+  retry-after 헤더)를 우선 사용 — 메시지 정규식은 CLI 프록시용 폴백으로 강등.
+- `repairTruncatedJson` 재작성 — 문자열 중간 절단(토큰 제한 절단의 최다 형태) 복구.
+  기존 구현은 5/7 절단 시나리오에서 invalid JSON을 반환했음.
+- text2step 폴백: step1 분석 텍스트를 2,000자로 자르던 제한 제거(상한 32,000자) —
+  스키마 필드가 조용히 기본값으로 채워지던 데이터 유실 수정. 실패 시 각 단계의
+  파싱/검증 사유와 finishReason을 에러에 포함.
+- `mergeAbortSignals`를 `AbortSignal.any`로 교체 — 이미 abort된 외부 signal 즉시 반영,
+  호출 완료 후 최대 5분간 이벤트 루프를 붙잡던 타이머 누수 제거.
+- 네이티브 구조화 출력을 deprecated `generateObject`에서 `generateText` + `Output.object`로 이행.
+- `createInMemoryModelConfig`: override로 provider를 바꾸면 바뀐 provider의
+  providerDefaults가 적용되도록 수정 (기존: 원래 provider의 defaults 적용 버그).
+- `normalizeUsage(usage: unknown)` — 호출부 캐스트 불필요. `finishReason`이
+  `FinishReason` union 타입으로 강화.
+- `retryWithPolicy`/`RetryPolicyOptions`가 `runner` 배럴에서 export됨 (문서화된 API였으나 누락).
+- 죽은 코드 제거: `isParseError`, `MAX_PARSE_RETRIES`, `select-strategy.ts`(전략 선택이
+  `strategies.executeStructured`로 통합).
+- 패키징: zod 이중 선언 해소(peer+dev만), `sideEffects: false`, npm provenance,
+  `packageManager` 필드. CI에 lint 게이트 추가. 소비자 dispatch가 publish 성공 이후에만 발송.
+
+## 3.3.0 (2026-05-27)
+
+- refactor: `gateway.ts`에서 `model-factory.ts`(getModel/SDK_MAP/DEFAULT_MODELS),
+  `json-repair.ts`(extractJson/repairTruncatedJson) 분리. 재시도 로직을
+  `retryWithPolicy`(`retry-utils.ts`)로 분리.
+- refactor(사후): structured output 전략 패턴 분리(`strategies.ts`),
+  `normalizeUsage`를 `normalize-usage.ts`로 추출 (commit 3866f98, 태그 이후).
+- ci: repository-dispatch action SHA 고정 (supply-chain 보안), dispatch 계약 통합.
+
+## 3.2.0 (2026-05-27)
+
+- **BREAKING**: `ConcurrencyAdapter`, `createStaticConcurrency`(adapters),
+  `runWithProviderGrouping`(runner) 제거. 동시성 제어는 소비자 측에서
+  p-limit 등으로 직접 처리.
+- test: extractJson/repairTruncatedJson, analyzeStructured 2단계 파이프라인 테스트 대폭 추가.
+
+## 3.1.0 (2026-05-27)
+
+- refactor: `getModel()`을 `PROVIDER_REGISTRY` 기반 레지스트리 디스패처로 재구성 (API 변경 없음).
+- ci: npm publish + 소비자 자동 업데이트 워크플로우 추가.
+
 ## 3.0.0 (2026-05-26)
 
 ### Package Rename

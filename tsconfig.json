@@ -18,6 +18,6 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["src/**/*", "cli/**/*"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }

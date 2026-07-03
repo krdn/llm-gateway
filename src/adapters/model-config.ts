@@ -11,6 +11,8 @@ export interface ResolvedModelConfig {
   baseUrl?: string;
   apiKey?: string;
   maxOutputTokens?: number;
+  /** 모듈별 API 호출 타임아웃 (ms) — 미지정 시 게이트웨이 기본값(5분) */
+  timeoutMs?: number;
 }
 
 export interface ModelConfigAdapter {
@@ -52,15 +54,18 @@ export function createInMemoryModelConfig(
             `Pass it via createInMemoryModelConfig({ modules: { ... } }).`,
         );
       }
-      const providerDefault = providerDefaults[base.provider] ?? {};
       const override = overrides[moduleName] ?? {};
+      // 유효 provider를 먼저 확정한 뒤 그 provider의 defaults를 적용한다
+      // (override로 provider를 바꾸면 바뀐 provider의 defaults가 쓰여야 함)
+      const provider = override.provider ?? base.provider;
+      const providerDefault = providerDefaults[provider] ?? {};
 
-      const provider = (override.provider as AIProvider | undefined) ?? base.provider;
       const model = override.model ?? providerDefault.model ?? base.model;
       const apiKey =
         override.apiKey ?? providerDefault.apiKey ?? resolveApiKeyFromEnv(provider);
       const baseUrl = override.baseUrl ?? providerDefault.baseUrl;
       const maxOutputTokens = override.maxOutputTokens;
+      const timeoutMs = override.timeoutMs;
 
       return {
         provider,
@@ -68,6 +73,7 @@ export function createInMemoryModelConfig(
         ...(apiKey ? { apiKey } : {}),
         ...(baseUrl ? { baseUrl } : {}),
         ...(maxOutputTokens ? { maxOutputTokens } : {}),
+        ...(timeoutMs ? { timeoutMs } : {}),
       };
     },
   };

@@ -53,7 +53,7 @@ description: >
 
 > ✅ 소비자 셋업 완료. 자동 PR이 발화하려면 **라이브러리(llm-gateway) 레포에서** 다음 수동 단계가 필요합니다:
 >
-> 1. `.github/workflows/notify-consumers.yml`의 dispatch 대상에 이 레포를 추가하세요.
+> 1. `.github/workflows/publish.yml`의 notify job matrix에 이 레포를 추가하세요.
 >    이 레포 주소는 `git remote get-url origin`으로 확인합니다.
 >    현재는 `krdn/gons-dashboard` 단일 step입니다. 소비자가 여러 개이므로 matrix로 전환하는 것이 좋습니다.
 > 2. `CONSUMER_DISPATCH_PAT` Fine-grained PAT에 이 레포 접근 권한을 추가하세요.

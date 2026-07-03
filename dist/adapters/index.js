@@ -9,19 +9,21 @@ function createInMemoryModelConfig(options) {
           `[model-config] Unknown module: ${moduleName}. Pass it via createInMemoryModelConfig({ modules: { ... } }).`
         );
       }
-      const providerDefault = providerDefaults[base.provider] ?? {};
       const override = overrides[moduleName] ?? {};
       const provider = override.provider ?? base.provider;
+      const providerDefault = providerDefaults[provider] ?? {};
       const model = override.model ?? providerDefault.model ?? base.model;
       const apiKey = override.apiKey ?? providerDefault.apiKey ?? resolveApiKeyFromEnv(provider);
       const baseUrl = override.baseUrl ?? providerDefault.baseUrl;
       const maxOutputTokens = override.maxOutputTokens;
+      const timeoutMs = override.timeoutMs;
       return {
         provider,
         model,
         ...apiKey ? { apiKey } : {},
         ...baseUrl ? { baseUrl } : {},
-        ...maxOutputTokens ? { maxOutputTokens } : {}
+        ...maxOutputTokens ? { maxOutputTokens } : {},
+        ...timeoutMs ? { timeoutMs } : {}
       };
     }
   };

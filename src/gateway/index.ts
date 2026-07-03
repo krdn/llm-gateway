@@ -5,6 +5,7 @@ export {
   normalizeUsage,
   type AIProvider,
   type AIGatewayOptions,
+  type AnalyzeTextResult,
   type NormalizedUsage,
 } from './gateway';
 export {
@@ -13,7 +14,6 @@ export {
   getProvidersByAccess,
   isProxyCli,
   needsTextFallback,
-  needsJsonMode,
   type AccessMethod,
   type CallMethod,
   type ProviderMeta,

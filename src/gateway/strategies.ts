@@ -1,12 +1,13 @@
-// 구조화 출력 전략 실행기 (executor) — SDK 레이어.
-// selectStrategy()가 고른 identifier를 받아 실제 SDK 호출을 수행한다.
+// 구조화 출력 전략 — SDK 레이어.
+// provider capability(supportsStructuredOutput)에 따라 native 구조화 출력 또는
+// text2step(generateText 2-call 폴백)을 실행한다.
 // 모든 전략은 { object, usage: NormalizedUsage, finishReason } 단일 형태를 반환한다.
-import { generateObject, generateText, type LanguageModel } from 'ai';
+import { generateText, Output, type FinishReason, type LanguageModel } from 'ai';
 import type { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { normalizeUsage, type NormalizedUsage } from './normalize-usage';
 import { tryParseAndValidate } from './json-repair';
-import type { StructuredStrategy } from './select-strategy';
+import { needsTextFallback, type AIProvider } from './provider-meta';
 
 /** 전략 실행에 필요한 공통 옵션 (provider/model 결정 이후의 호출 파라미터) */
 export interface StrategyExecuteOptions {
@@ -19,63 +20,65 @@ export interface StrategyExecuteOptions {
 export interface StrategyResult<T> {
   object: T;
   usage: NormalizedUsage;
-  finishReason: string;
+  finishReason: FinishReason;
 }
 
+/** step2 변환기에 전달하는 step1 분석 텍스트 길이 상한 (maxOutputTokens 8192 기준 여유폭) */
+const CONVERTER_INPUT_MAX_CHARS = 32_000;
+
 /**
- * 선택된 전략을 실행한다.
+ * provider capability에 따라 구조화 출력을 실행한다.
  *
- * @param strategy selectStrategy()가 유도한 전략 identifier
+ * - 네이티브 지원 → `generateText` + `Output.object` (AI SDK v6가 provider별
+ *   structured-output 모드를 내부에서 선택)
+ * - 미지원 (CLI 프록시, Ollama, custom) → 텍스트 2-call 폴백
+ *
+ * @param provider capability 판정에 사용할 프로바이더
  * @param model getModel()이 생성한 LanguageModel
  * @param schema 응답을 검증할 Zod 스키마
  * @param opts 호출 파라미터
  */
-export async function executeStrategy<T>(
-  strategy: StructuredStrategy,
+export async function executeStructured<T>(
+  provider: AIProvider,
   model: LanguageModel,
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   opts: StrategyExecuteOptions,
 ): Promise<StrategyResult<T>> {
-  switch (strategy) {
-    case 'native':
-      return executeNative(model, schema, opts);
-    case 'text2step':
-      return executeText2Step(model, schema, opts);
-  }
+  return needsTextFallback(provider)
+    ? executeText2Step(model, schema, opts)
+    : executeNative(model, schema, opts);
 }
 
-/**
- * 네이티브 구조화 출력 (generateObject).
- * AI SDK v6는 provider별 structured-output 모드를 내부에서 선택하므로
- * 호출자는 mode 플래그를 지정하지 않는다.
- */
+/** 네이티브 구조화 출력 (generateText + Output.object) */
 async function executeNative<T>(
   model: LanguageModel,
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   opts: StrategyExecuteOptions,
 ): Promise<StrategyResult<T>> {
-  const result = await generateObject({
+  const result = await generateText({
     model,
     ...(opts.systemPrompt ? { system: opts.systemPrompt } : {}),
     prompt: opts.prompt,
-    schema,
+    output: Output.object({ schema }),
     maxOutputTokens: opts.maxOutputTokens,
     abortSignal: opts.abortSignal,
   });
   return {
-    object: result.object,
-    usage: normalizeUsage(result.usage as Record<string, unknown>),
+    object: result.output,
+    usage: normalizeUsage(result.usage),
     finishReason: result.finishReason,
   };
 }
 
 /**
- * 2-call 텍스트 폴백 (generateObject 미지원 프로바이더용).
+ * 2-call 텍스트 폴백 (네이티브 구조화 출력 미지원 프로바이더용).
  *
  *   1단계: 원래 프롬프트로 분석 (JSON 출력 요청)
  *   2단계: 1단계 응답이 JSON이 아니면, 텍스트를 JSON으로 변환하는 전용 호출
  *
  * 두 호출의 usage는 NormalizedUsage로 정규화하여 합산한다.
+ * 두 단계 모두 실패하면 각 단계의 실패 원인(finishReason + 파싱/검증 사유)을
+ * 담은 에러를 던진다.
  */
 async function executeText2Step<T>(
   model: LanguageModel,
@@ -111,28 +114,16 @@ Output JSON only. Start with {.`;
     abortSignal: opts.abortSignal,
   });
 
-  console.log(
-    `[llm-gateway] text2step [step 1]: 응답 수신 (finishReason=${step1.finishReason}, 텍스트 길이=${step1.text.length})`,
-  );
-
-  if (step1.finishReason === 'length') {
-    console.warn(
-      `[llm-gateway] 응답이 토큰 제한으로 잘림 (finishReason=length) — JSON 복구 시도`,
-    );
-  }
-
   const step1Result = tryParseAndValidate(step1.text, schema);
-  if (step1Result) {
+  if (step1Result.ok) {
     return {
-      object: step1Result,
-      usage: normalizeUsage(step1.usage as Record<string, unknown>),
+      object: step1Result.data,
+      usage: normalizeUsage(step1.usage),
       finishReason: step1.finishReason,
     };
   }
 
   // ── 2단계: 텍스트 → JSON 변환 전용 호출 ──
-  console.log(`[llm-gateway] 1단계 JSON 파싱 실패 → 2단계 변환 호출`);
-
   const converterSystem = `You are a text-to-JSON converter.
 Your ONLY job is to convert the given analysis text into a JSON object.
 Rules:
@@ -142,11 +133,11 @@ Rules:
 - Extract information from the text and map it to the schema fields.
 - If information is missing, use reasonable defaults ("" for strings, 0 for numbers, [] for arrays).`;
 
-  const analysisSnippet = step1.text.substring(0, 2000);
+  const analysisText = step1.text.slice(0, CONVERTER_INPUT_MAX_CHARS);
   const converterPrompt = `Convert this analysis into JSON:
 
 """
-${analysisSnippet}
+${analysisText}
 """
 
 Target JSON schema:
@@ -162,32 +153,28 @@ Output the JSON object now:`;
     abortSignal: opts.abortSignal,
   });
 
-  console.log(
-    `[llm-gateway] text2step [step 2]: 응답 수신 (finishReason=${step2.finishReason}, 텍스트 길이=${step2.text.length})`,
-  );
-
   const step2Result = tryParseAndValidate(step2.text, schema);
-  if (step2Result) {
-    console.log(`[llm-gateway] 2단계 변환 성공`);
+  if (step2Result.ok) {
     return {
-      object: step2Result,
+      object: step2Result.data,
       usage: sumUsage(step1.usage, step2.usage),
       finishReason: step2.finishReason,
     };
   }
 
-  console.error(
-    `[llm-gateway] 2단계 변환도 실패 — 원본 (처음 500자): ${step2.text.substring(0, 500)}`,
-  );
+  const step1Hint = step1.finishReason === 'length' ? ', 토큰 제한 절단' : '';
   throw new Error(
-    `JSON 파싱 실패: 2단계 변환 후에도 유효한 JSON을 생성하지 못함\n응답 텍스트 (처음 500자): ${step2.text.substring(0, 500)}`,
+    `[llm-gateway] 구조화 출력 실패 — ` +
+      `step1(finishReason=${step1.finishReason}${step1Hint}): ${step1Result.reason} / ` +
+      `step2(finishReason=${step2.finishReason}): ${step2Result.reason}\n` +
+      `step2 응답 (처음 500자): ${step2.text.slice(0, 500)}`,
   );
 }
 
 /** 두 호출의 usage를 각각 정규화한 뒤 합산하여 단일 NormalizedUsage로 반환 */
 function sumUsage(u1: unknown, u2: unknown): NormalizedUsage {
-  const a = normalizeUsage(u1 as Record<string, unknown>);
-  const b = normalizeUsage(u2 as Record<string, unknown>);
+  const a = normalizeUsage(u1);
+  const b = normalizeUsage(u2);
   return {
     inputTokens: a.inputTokens + b.inputTokens,
     outputTokens: a.outputTokens + b.outputTokens,

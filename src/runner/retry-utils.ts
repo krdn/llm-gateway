@@ -1,10 +1,26 @@
-// Rate limit 재시도 유틸리티 (runner.ts, map-reduce.ts 공용)
+// Rate limit 재시도 유틸리티 (runModule 및 소비자 파이프라인 공용)
+import { APICallError, RetryError } from 'ai';
+
+/**
+ * AI SDK가 던진 에러에서 구조화된 APICallError를 꺼낸다.
+ * AI SDK 내부 재시도(maxRetries)가 소진되면 마지막 에러를 RetryError로
+ * 감싸므로, 먼저 래핑을 해제해야 statusCode 기반 분류가 동작한다.
+ */
+function unwrapApiError(error: unknown): APICallError | undefined {
+  const unwrapped = RetryError.isInstance(error) ? error.lastError : error;
+  return APICallError.isInstance(unwrapped) ? unwrapped : undefined;
+}
 
 /** Rate limit 에러 감지 (재시도 가능한 에러) */
 export function isRateLimitError(error: unknown): boolean {
+  const apiError = unwrapApiError(error);
+  if (apiError?.statusCode !== undefined) {
+    return apiError.statusCode === 429;
+  }
+  // CLI 프록시/Ollama 등 비구조화 에러는 메시지 패턴으로 폴백
   const msg = error instanceof Error ? error.message : String(error);
   return (
-    /rate\s*limit|429|quota\s*exceeded|RESOURCE_EXHAUSTED|[TR]PM/i.test(msg) ||
+    /rate\s*limit|\b429\b|quota\s*exceeded|RESOURCE_EXHAUSTED|\b[TR]PM\b/i.test(msg) ||
     // Gemini 서버 용량 부족 (구체적 문구만 매칭)
     msg.includes('No capacity available') ||
     // 프로바이더가 명시한 재시도 안내
@@ -14,14 +30,24 @@ export function isRateLimitError(error: unknown): boolean {
 
 /** 서버 일시 장애 감지 (rate limit과 분리 — 별도 재시도 정책 적용) */
 export function isServerOverloadError(error: unknown): boolean {
+  const apiError = unwrapApiError(error);
+  if (apiError?.statusCode !== undefined) {
+    // 529 = Anthropic overloaded_error
+    return apiError.statusCode === 503 || apiError.statusCode === 529;
+  }
   const msg = error instanceof Error ? error.message : String(error);
   return (
-    msg.includes('503') || msg.includes('overloaded') || msg.includes('temporarily unavailable')
+    /\b503\b/.test(msg) || msg.includes('overloaded') || msg.includes('temporarily unavailable')
   );
 }
 
-/** Rate limit 에러에서 대기 시간 추출 (초) */
+/** Rate limit 에러에서 대기 시간 추출 (초) — retry-after 헤더 우선, 메시지 패턴 폴백 */
 export function parseRetryAfter(error: unknown): number {
+  const headerValue = unwrapApiError(error)?.responseHeaders?.['retry-after'];
+  if (headerValue !== undefined) {
+    const seconds = Number(headerValue);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds);
+  }
   const msg = error instanceof Error ? error.message : String(error);
   // "try again in 5s" 또는 "Please retry in 19.303052072s" 패턴
   const match = msg.match(/(?:try again|retry) in ([\d.]+)s/i);
@@ -34,17 +60,12 @@ export function sleep(ms: number): Promise<void> {
 }
 
 export const MAX_RATE_LIMIT_RETRIES = 5;
-export const MAX_PARSE_RETRIES = 2;
 
-/** 구조화 응답 파싱 실패 감지 */
-export function isParseError(error: unknown): boolean {
-  const msg = error instanceof Error ? error.message : String(error);
-  return (
-    msg.includes('could not parse') ||
-    msg.includes('No object generated') ||
-    msg.includes('Failed to parse')
-  );
-}
+/**
+ * provider가 안내한 retry-after가 이 값을 넘으면 재시도하지 않고 원본 에러를
+ * 즉시 던진다 (예: Gemini 일일 쿼터 소진 시 'retry in 86400s' — 24시간 대기 방지).
+ */
+export const MAX_RETRY_AFTER_MS = 5 * 60_000;
 
 export interface RetryPolicyOptions {
   maxRateLimitRetries?: number;
@@ -56,6 +77,12 @@ export interface RetryPolicyOptions {
   _sleep?: (ms: number) => Promise<void>;
 }
 
+/**
+ * Rate limit(exponential backoff)과 서버 과부하(고정 backoff)를 서로 독립된
+ * 재시도 예산으로 처리한다. 두 예산 중 해당하는 쪽이 소진되면 마지막 원본
+ * 에러를 그대로 다시 던진다 (일반 에러로 감싸지 않음 — 상위에서 statusCode/
+ * 메시지 기반 분류가 계속 동작해야 하므로).
+ */
 export async function retryWithPolicy<T>(
   fn: () => Promise<T>,
   options?: RetryPolicyOptions,
@@ -65,20 +92,25 @@ export async function retryWithPolicy<T>(
   const overloadBackoff = options?.overloadBackoffMs ?? 15_000;
   const wait = options?._sleep ?? sleep;
 
+  let rateLimitAttempts = 0;
   let overloadAttempts = 0;
 
-  for (let attempt = 0; attempt <= maxRateLimit; attempt++) {
-    if (options?.shouldAbort && await options.shouldAbort()) {
+  while (true) {
+    if (options?.shouldAbort && (await options.shouldAbort())) {
       throw new Error('aborted');
     }
 
     try {
       return await fn();
     } catch (error) {
-      if (isRateLimitError(error) && attempt < maxRateLimit) {
-        const retryAfterSec = parseRetryAfter(error);
-        const backoffMs = Math.max(retryAfterSec * 1000, (attempt + 1) * 3000);
-        await options?.onRetry?.({ error, attempt: attempt + 1, backoffMs, type: 'rate-limit' });
+      if (isRateLimitError(error) && rateLimitAttempts < maxRateLimit) {
+        const retryAfterMs = parseRetryAfter(error) * 1000;
+        if (retryAfterMs > MAX_RETRY_AFTER_MS) {
+          throw error; // 일일 쿼터 소진 등 장시간 대기 안내는 즉시 실패
+        }
+        rateLimitAttempts++;
+        const backoffMs = Math.max(retryAfterMs, rateLimitAttempts * 3000);
+        await options?.onRetry?.({ error, attempt: rateLimitAttempts, backoffMs, type: 'rate-limit' });
         await wait(backoffMs);
         continue;
       }
@@ -91,5 +123,4 @@ export async function retryWithPolicy<T>(
       throw error;
     }
   }
-  throw new Error('재시도 한도 초과');
 }

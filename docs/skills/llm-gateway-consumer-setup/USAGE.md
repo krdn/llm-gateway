@@ -52,7 +52,7 @@ cp -r docs/skills/llm-gateway-consumer-setup ~/.claude/skills/
 
 4단계에서 안내하는 단계는 다른 레포·secret이라 스킬이 자동화하지 못한다:
 
-1. **llm-gateway 레포**의 `.github/workflows/notify-consumers.yml` matrix에 새 소비자 레포 추가
+1. **llm-gateway 레포**의 `.github/workflows/publish.yml`의 notify job matrix에 새 소비자 레포 추가
    (레포 주소는 `git remote get-url origin`으로 확인)
 2. **`CONSUMER_DISPATCH_PAT`** Fine-grained PAT에 새 레포 접근 권한 추가
 

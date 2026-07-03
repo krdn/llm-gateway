@@ -31,6 +31,41 @@ describe('createInMemoryModelConfig', () => {
     await expect(adapter.resolve('unknown')).rejects.toThrow(/Unknown module/);
   });
 
+  it('override.provider로 프로바이더를 바꾸면 바뀐 프로바이더의 defaults가 적용됨', async () => {
+    const adapter = createInMemoryModelConfig({
+      modules: { mod: { provider: 'anthropic', model: 'claude-sonnet-4-6' } },
+      overrides: { mod: { provider: 'openai', model: 'gpt-4.1-nano' } },
+      providerDefaults: {
+        openai: { apiKey: 'sk-openai' },
+        anthropic: { baseUrl: 'https://claude-proxy' },
+      },
+    });
+    const cfg = await adapter.resolve('mod');
+    expect(cfg.provider).toBe('openai');
+    expect(cfg.apiKey).toBe('sk-openai'); // openai defaults 적용
+    expect(cfg.baseUrl).toBeUndefined(); // anthropic defaults가 새어들지 않음
+  });
+
+  it('provider 전환 시 새 프로바이더의 providerDefaults.model이 base.model보다 우선', async () => {
+    const adapter = createInMemoryModelConfig({
+      modules: { mod: { provider: 'anthropic', model: 'claude-sonnet-4-6' } },
+      overrides: { mod: { provider: 'openai' } },
+      providerDefaults: { openai: { model: 'gpt-4.1-nano' } },
+    });
+    const cfg = await adapter.resolve('mod');
+    expect(cfg.provider).toBe('openai');
+    expect(cfg.model).toBe('gpt-4.1-nano');
+  });
+
+  it('override.timeoutMs 반영', async () => {
+    const adapter = createInMemoryModelConfig({
+      modules: { mod: { provider: 'anthropic', model: 'claude-sonnet-4-6' } },
+      overrides: { mod: { timeoutMs: 120_000 } },
+    });
+    const cfg = await adapter.resolve('mod');
+    expect(cfg.timeoutMs).toBe(120_000);
+  });
+
   it('환경변수에서 apiKey 자동 추론 (Anthropic)', async () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
     const adapter = createInMemoryModelConfig({

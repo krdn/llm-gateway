@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { extractJson, repairTruncatedJson } from './gateway';
+import { z } from 'zod';
+import { extractJson, repairTruncatedJson, tryParseAndValidate } from './json-repair';
 
 describe('extractJson', () => {
   // ── 코드블록 추출 ──
@@ -99,15 +100,48 @@ describe('repairTruncatedJson', () => {
     });
   });
 
-  // ── 불완전한 문자열 (알려진 한계) ──
+  // ── 문자열 중간 절단 (토큰 제한 절단의 가장 흔한 형태) ──
   describe('불완전한 문자열 처리', () => {
-    it('값 중간에서 잘린 문자열 — 홀수 따옴표 절단은 복구 한계', () => {
-      // 현재 repairTruncatedJson은 홀수 따옴표를 감지하지만,
-      // 잘라낸 결과가 여전히 유효하지 않을 수 있다 (known limitation)
+    it('값 중간에서 잘린 문자열 — 미완성 키-값을 제거하고 복구', () => {
       const input = '{"complete": "ok", "truncated": "half';
       const result = repairTruncatedJson(input);
-      // 복구가 완벽하지 않으므로 원본보다 짧아졌는지만 확인
-      expect(result.length).toBeLessThanOrEqual(input.length + 5);
+      expect(JSON.parse(result)).toEqual({ complete: 'ok' });
+    });
+
+    it('키 중간에서 잘린 경우 복구', () => {
+      const input = '{"a": 1, "trunca';
+      const result = repairTruncatedJson(input);
+      expect(JSON.parse(result)).toEqual({ a: 1 });
+    });
+
+    it('콜론 뒤 값 없이 잘린 경우 복구', () => {
+      const input = '{"a": 1, "b": ';
+      const result = repairTruncatedJson(input);
+      expect(JSON.parse(result)).toEqual({ a: 1 });
+    });
+
+    it('미완성 리터럴 값(tr)에서 잘린 경우 복구', () => {
+      const input = '{"a": 1, "b": tr';
+      const result = repairTruncatedJson(input);
+      expect(JSON.parse(result)).toEqual({ a: 1 });
+    });
+
+    it('중첩 객체의 문자열 값 중간에서 잘린 경우 복구', () => {
+      const input = '{"outer": {"a": "done", "b": "cut he';
+      const result = repairTruncatedJson(input);
+      expect(JSON.parse(result)).toEqual({ outer: { a: 'done' } });
+    });
+
+    it('문자열 값 안의 쉼표는 절단 지점으로 오인하지 않음', () => {
+      const input = '{"weird": "a,b", "cut": "hal';
+      const result = repairTruncatedJson(input);
+      expect(JSON.parse(result)).toEqual({ weird: 'a,b' });
+    });
+
+    it('이스케이프된 백슬래시로 끝나는 문자열(C:\\temp\\)을 오인하지 않음', () => {
+      const input = '{"path": "C:\\\\temp\\\\"';
+      const result = repairTruncatedJson(input);
+      expect(JSON.parse(result)).toEqual({ path: 'C:\\temp\\' });
     });
 
     it('완전한 키-값 쌍 뒤에서 잘린 경우 복구 성공', () => {
@@ -116,6 +150,31 @@ describe('repairTruncatedJson', () => {
       const parsed = JSON.parse(result);
       expect(parsed.done).toBe(true);
       expect(parsed.extra).toBe(123);
+    });
+
+    it('콜론 없는 단독 미완성 키를 제거하고 복구', () => {
+      const input = '{"a": 1, "trunca';
+      expect(JSON.parse(repairTruncatedJson(input))).toEqual({ a: 1 });
+    });
+
+    it('완결된 문자열 값은 미완성 키로 오인하지 않음 (닫기만)', () => {
+      const input = '{"name": "test"';
+      expect(JSON.parse(repairTruncatedJson(input))).toEqual({ name: 'test' });
+    });
+
+    it('배열의 완결된 문자열 원소는 보존 (배열만 닫기)', () => {
+      const input = '["a", "b"';
+      expect(JSON.parse(repairTruncatedJson(input))).toEqual(['a', 'b']);
+    });
+
+    it('배열의 미완성 리터럴 원소는 제거', () => {
+      const input = '[1, 2, tr';
+      expect(JSON.parse(repairTruncatedJson(input))).toEqual([1, 2]);
+    });
+
+    it('객체 안 배열 값의 미완성 원소 제거', () => {
+      const input = '{"nums": [1, 2, fal';
+      expect(JSON.parse(repairTruncatedJson(input))).toEqual({ nums: [1, 2] });
     });
   });
 
@@ -142,13 +201,16 @@ describe('repairTruncatedJson', () => {
       expect(parsed.recommendations[0].action).toBe('금리 인하');
     });
 
-    it('배열 원소 중간에서 잘린 경우', () => {
+    it('배열 원소 중간에서 잘린 경우 — 완전한 값을 가진 부분 원소는 보존', () => {
       const input = '{"results": [{"score": 90, "label": "good"}, {"score": 75, "label": "ok"}, {"score": 60';
       const result = repairTruncatedJson(input);
       const parsed = JSON.parse(result);
-      expect(parsed.results).toHaveLength(2);
+      // "score": 60은 완전한 키-값이므로 세 번째 원소가 부분 객체로 보존된다
+      // ("완전해 보이는 값은 보존" 규칙 — {"a": 1, "b": 85 케이스와 일관)
+      expect(parsed.results).toHaveLength(3);
       expect(parsed.results[0].score).toBe(90);
       expect(parsed.results[1].score).toBe(75);
+      expect(parsed.results[2]).toEqual({ score: 60 });
     });
 
     it('이스케이프된 따옴표 포함 문자열', () => {
@@ -167,13 +229,13 @@ describe('repairTruncatedJson', () => {
       expect(parsed.score).toBe(85);
     });
 
-    it('빈 객체/배열이 포함된 복구 — 홀수 따옴표 시 뒷부분 절단됨', () => {
-      // "value": 1 의 따옴표가 홀수를 만들어 마지막 키-값이 절단됨 (known limitation)
+    it('빈 객체/배열 + 완전한 숫자 값 모두 보존', () => {
       const input = '{"empty_obj": {}, "empty_arr": [], "value": 1';
       const result = repairTruncatedJson(input);
       const parsed = JSON.parse(result);
       expect(parsed.empty_obj).toEqual({});
       expect(parsed.empty_arr).toEqual([]);
+      expect(parsed.value).toBe(1);
     });
   });
 
@@ -196,5 +258,39 @@ describe('repairTruncatedJson', () => {
       expect(parsed.a).toBe(1);
       expect(parsed.b).toEqual([true, false]);
     });
+  });
+});
+
+describe('tryParseAndValidate', () => {
+  const TestSchema = z.object({ summary: z.string(), score: z.number() });
+
+  it('유효한 JSON + 스키마 통과 → { ok: true, data }', () => {
+    const result = tryParseAndValidate('{"summary": "ok", "score": 90}', TestSchema);
+    expect(result).toEqual({ ok: true, data: { summary: 'ok', score: 90 } });
+  });
+
+  it('빈 응답 → { ok: false, reason: 빈 응답 }', () => {
+    const result = tryParseAndValidate('   ', TestSchema);
+    expect(result).toEqual({ ok: false, reason: '빈 응답' });
+  });
+
+  it('파싱 불가 텍스트 → JSON.parse 실패 사유 포함', () => {
+    const result = tryParseAndValidate('definitely not json', TestSchema);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('JSON.parse 실패');
+  });
+
+  it('스키마 불일치 → Zod issue 요약 포함', () => {
+    const result = tryParseAndValidate('{"summary": "ok", "score": "high"}', TestSchema);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain('Zod 검증 실패');
+      expect(result.reason).toContain('score');
+    }
+  });
+
+  it('falsy 최상위 값(false)도 ok:true로 정상 판별', () => {
+    const result = tryParseAndValidate('false', z.literal(false));
+    expect(result).toEqual({ ok: true, data: false });
   });
 });

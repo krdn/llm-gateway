@@ -1,6 +1,6 @@
 {
   "name": "@krdn/llm-gateway",
-  "version": "3.3.0",
+  "version": "4.0.0",
   "description": "Multi-provider LLM gateway — unified interface for Anthropic, OpenAI, Gemini, DeepSeek, Ollama, and more. Structured output with JSON repair, retry with backoff, token normalization.",
   "type": "module",
   "license": "MIT",
@@ -50,24 +50,25 @@
     "@ai-sdk/google": "^3.0.59",
     "@ai-sdk/openai": "^3.0.51",
     "ai": "^6.0.149",
-    "ai-sdk-provider-gemini-cli": "^2.0.1",
-    "zod": "^3.24.0",
     "zod-to-json-schema": "^3.25.2"
   },
   "peerDependencies": {
+    "ai-sdk-provider-gemini-cli": "^2.0.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
+    "ai-sdk-provider-gemini-cli": "^2.0.1",
     "eslint": "^9.0.0",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "zod": "^3.24.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.3.0"
   },
   "keywords": [
     "llm",
@@ -82,5 +83,16 @@
     "vercel-ai-sdk",
     "structured-output",
     "json-repair"
-  ]
+  ],
+  "sideEffects": false,
+  "packageManager": "pnpm@10.28.2",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependenciesMeta": {
+    "ai-sdk-provider-gemini-cli": {
+      "optional": true
+    }
+  }
 }

@@ -7,58 +7,36 @@
 ## 특징
 
 - **AI 프로바이더 게이트웨이**: Anthropic Claude, Google Gemini, OpenAI, Ollama, OpenRouter, DeepSeek, xAI, Gemini CLI, Claude CLI Proxy 통합
-- **Vercel AI SDK v6** 기반 구조화 출력 (`generateObject`) + JSON 폴백
+- **Vercel AI SDK v6** 기반 구조화 출력 (`generateText` + `Output.object`) + 미지원 프로바이더용 텍스트 2-call 폴백 (잘린 JSON 자동 복구 포함)
 - **제네릭 모듈 엔진**: `AnalysisModule<TInput, TResult>` — 입력/결과 모두 도메인 자유
-- **어댑터 패턴**: `ModelConfigAdapter`, `PipelineControlAdapter`, `ConcurrencyAdapter` — DB·취소·동시성 의존성을 인터페이스로 추상화
-- **Rate limit / 서버 과부하 자동 재시도** (exponential backoff)
-- **부분 실패 허용** — 실패한 모듈도 throw하지 않고 `failed` 상태 반환
+- **어댑터 패턴**: `ModelConfigAdapter`, `PipelineControlAdapter` — DB·취소·비용 한도 의존성을 인터페이스로 추상화
+- **Rate limit / 서버 과부하 자동 재시도** (exponential backoff, retry-after 상한으로 일일 쿼터 폭주 방지)
+- **부분 실패 허용** — 실패한 모듈도 throw하지 않고 `failed` 상태 반환 (discriminated union)
+- **취소/타임아웃 전파** — `abortSignal`/`timeoutMs`가 진행 중인 LLM 호출까지 중단
 
-## v1.x → v2.0.0 BREAKING CHANGES
+## v4.0.0 주요 변경 (BREAKING)
 
-본 패키지는 원래 `ai-signalcraft`(정치 여론 분석)에서 분리되었으며 v1.x는 12개 도메인 모듈을 함께 포함했습니다. v2.0.0부터는 **도메인 코드를 모두 제거**하고 순수한 인프라 라이브러리로 재정비되었습니다.
+- `AnalysisModuleResult`가 **discriminated union**이 됨 — `status === 'completed'`로 좁히면 `result`/`usage`가 non-null로 보장
+- `runModule`의 `configAdapter`/`extractMeta`가 **선택**이 됨 — 없으면 `module.provider`/`module.model` 사용 (어댑터가 있으면 어댑터가 우선)
+- 잘못된 설정을 침묵으로 가리던 폴백 제거 — 알 수 없는 provider·기본 모델 없는 provider의 model 미지정·`custom`의 baseUrl 누락·유료 API의 apiKey 누락은 **명시적 에러**
+- `analyzeText`의 usage에 정규화 필드(`inputTokens`/`outputTokens`/`totalTokens`) 보장 (원본 필드는 보존)
+- 라이브러리가 콘솔에 로그를 찍지 않음 — 진단 정보는 에러 메시지와 `onProgress` 콜백으로 전달
+- `gemini-cli` 사용 시 `ai-sdk-provider-gemini-cli`를 소비자가 직접 설치 (선택적 peerDependency)
+- `requiresJsonMode`/`needsJsonMode` 제거 (AI SDK v6가 모드를 내부 선택)
+- Node **20.3.0 이상** 필요 (`AbortSignal.any`)
 
-### 제거된 항목
-
-- `./modules`, `./schemas` 서브경로 export
-- 12개 정치 여론 분석 모듈 (`macroViewModule`, `riskMapModule`, …)
-- 12개 Zod 스키마 (`MacroViewSchema`, …)
-- `STAGE1_MODULES`, `STAGE2_MODULES`, `STAGE3_MODULES`, `STAGE4_PARALLEL`, `STAGE4_SEQUENTIAL`, `ALL_MODULES`
-- `MODULE_MODEL_MAP`, `MODULE_NAMES`, `getModuleByName()`
-- `AnalysisInput` 인터페이스 (articles/videos/comments 강제)
-- CLI 도구 (`ai-analysis` bin) — 도메인 모듈 레지스트리에 의존했음
-
-### 변경된 시그니처
-
-```ts
-// v1.x
-interface AnalysisModule<T = unknown> {
-  buildPrompt(data: AnalysisInput): string;  // ← 입력 형태 강제
-}
-function runModule<T>(module, input: AnalysisInput, options): ...
-
-// v2.0.0
-interface AnalysisModule<TInput = unknown, TResult = unknown> {
-  buildPrompt(data: TInput): string;  // ← 도메인 자유
-}
-function runModule<TInput, TResult>(
-  module: AnalysisModule<TInput, TResult>,
-  input: TInput,
-  options: RunModuleOptions<TInput>,  // ← extractMeta 콜백 필수
-): Promise<AnalysisModuleResult<TResult>>
-```
-
-### 마이그레이션
-
-v1.x에서 12개 모듈을 사용하던 프로젝트는 모듈/스키마 정의를 자체 저장소로 이전하고, `runModule` 호출 시 `extractMeta`를 추가하면 됩니다. 참고 구현: ai-signalcraft `packages/core/src/analysis/`.
+자세한 내역은 [CHANGELOG.md](./CHANGELOG.md) 참고.
 
 ## 설치
 
-```json
-{
-  "dependencies": {
-    "@krdn/llm-gateway": "github:krdn/ai-analysis-kit#v3.0.0"
-  }
-}
+```bash
+pnpm add @krdn/llm-gateway zod
+```
+
+`gemini-cli` 프로바이더를 쓸 경우에만 추가로:
+
+```bash
+pnpm add ai-sdk-provider-gemini-cli
 ```
 
 ## 사용법
@@ -93,29 +71,47 @@ const summarizerModule: AnalysisModule<MyInput, MyResult> = {
 };
 ```
 
-### 2. 모듈 실행
+### 2. 모듈 실행 (최소 구성)
+
+옵션 없이 실행하면 모듈 자신의 `provider`/`model`을 사용하고,
+API 키는 AI SDK의 환경변수 폴백(`ANTHROPIC_API_KEY` 등)을 따릅니다.
+
+```ts
+import { runModule } from '@krdn/llm-gateway';
+
+const result = await runModule(summarizerModule, myInput);
+
+if (result.status === 'completed') {
+  // discriminated union — result/usage가 non-null로 보장됨
+  console.log(result.result.summary);
+  console.log(result.usage.totalTokens);
+}
+```
+
+### 3. ModelConfigAdapter로 모델 설정 오버라이드
+
+어댑터를 지정하면 어댑터의 해석 결과가 모듈 필드보다 우선합니다.
 
 ```ts
 import { runModule, createInMemoryModelConfig } from '@krdn/llm-gateway';
 
 const configAdapter = createInMemoryModelConfig({
-  // 환경변수 ANTHROPIC_API_KEY 자동 사용
+  modules: {
+    summarizer: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+  },
+  // providerDefaults/overrides로 apiKey·baseUrl·timeoutMs 지정 가능
 });
 
 const result = await runModule(summarizerModule, myInput, {
   configAdapter,
   extractMeta: (input) => ({
     jobId: input.jobId,
-    itemCount: input.records.length,
+    itemCount: input.records.length, // 0이면 자동 skip
   }),
 });
-
-if (result.status === 'completed') {
-  console.log(result.result?.summary);
-}
 ```
 
-### 3. 커스텀 ModelConfigAdapter (DB 기반)
+DB 기반 커스텀 어댑터:
 
 ```ts
 import type { ModelConfigAdapter } from '@krdn/llm-gateway';
@@ -152,33 +148,30 @@ await runModule(summarizerModule, input, {
 });
 ```
 
-### 5. 파이프라인 제어 (취소 / 일시정지)
+콜백이 throw해도 모듈 실행은 중단되지 않습니다. 분석 성공 후 저장만 실패하면
+`status: 'completed'` + `errorMessage`(저장 실패 사유)로 반환됩니다.
+
+### 5. 파이프라인 제어 (취소 / 일시정지 / 비용 한도)
 
 ```ts
 import type { PipelineControlAdapter } from '@krdn/llm-gateway';
 
 const pipelineControl: PipelineControlAdapter = {
-  isCancelled: async (jobId) => false,
+  isCancelled: async (jobId) => false,   // true면 진행 중 호출도 abort
   waitIfPaused: async (jobId) => undefined,
-  checkCostLimit: async () => true,
+  checkCostLimit: async (jobId) => true, // false면 모듈 실행 전 중단
   appendEvent: async (jobId, level, message) => undefined,
 };
 
-await runModule(module, input, { configAdapter, pipelineControl, extractMeta });
+await runModule(module, input, { pipelineControl });
 ```
 
-### 6. 프로바이더별 동시성 제어
+외부에서 직접 취소하거나 모듈별 타임아웃을 걸 수도 있습니다:
 
 ```ts
-import { runWithProviderGrouping, createStaticConcurrency } from '@krdn/llm-gateway';
-
-const concurrency = createStaticConcurrency({ anthropic: 2, gemini: 4 });
-
-const results = await runWithProviderGrouping(
-  modules,
-  (m) => runModule(m, input, { configAdapter, extractMeta }),
-  concurrency,
-);
+const controller = new AbortController();
+await runModule(module, input, { abortSignal: controller.signal });
+// 또는 ResolvedModelConfig.timeoutMs로 모듈별 타임아웃 지정
 ```
 
 ## API
@@ -186,18 +179,23 @@ const results = await runWithProviderGrouping(
 | Symbol | 서브경로 | 용도 |
 |---|---|---|
 | `runModule` | `runner` | 단일 모듈 실행 (재시도 + persist + progress) |
-| `runWithProviderGrouping` | `runner` | 프로바이더별 동시성 제한 실행 |
-| `AnalysisModule<TInput, TResult>` | root | 모듈 인터페이스 (제네릭) |
-| `AnalysisModuleResult<TResult>` | root | 실행 결과 타입 |
-| `AnalysisInputMeta` | root | extractMeta 반환 타입 (`jobId`, `itemCount`) |
+| `retryWithPolicy`, `RetryPolicyOptions` | `runner` | rate limit/과부하 재시도 정책 |
+| `isRateLimitError`, `isServerOverloadError`, `parseRetryAfter` | `runner` | 에러 분류 유틸 |
+| `MAX_RATE_LIMIT_RETRIES`, `MAX_RETRY_AFTER_MS`, `sleep` | `runner` | 재시도 상수/유틸 |
 | `RunModuleOptions<TInput>` | `runner` | runModule 옵션 |
 | `PersistEvent`, `ProgressEvent` | `runner` | 콜백 이벤트 타입 |
-| `ModelConfigAdapter`, `createInMemoryModelConfig` | `adapters` | 모듈→모델 해석 |
-| `PipelineControlAdapter`, `noopPipelineControl` | `adapters` | 취소/일시정지 |
-| `ConcurrencyAdapter`, `createStaticConcurrency` | `adapters` | 동시성 제한 |
-| `analyzeText`, `analyzeStructured`, `normalizeUsage` | `gateway` | AI Gateway 저수준 API |
-| `PROVIDER_REGISTRY`, `AIProvider`, `getProvidersByAccess` | `gateway` | 프로바이더 메타데이터 |
-| `isRateLimitError`, `parseRetryAfter`, `MAX_RATE_LIMIT_RETRIES` | `runner` | 재시도 유틸 |
+| `AnalysisModule<TInput, TResult>` | root | 모듈 인터페이스 (제네릭) |
+| `AnalysisModuleResult<TResult>` | root | 실행 결과 discriminated union |
+| `ModuleUsage` | root | 모듈 usage 타입 (`NormalizedUsage` + provider/model) |
+| `AnalysisInputMeta` | root | extractMeta 반환 타입 (`jobId`, `itemCount`) |
+| `ModelConfigAdapter`, `ResolvedModelConfig`, `createInMemoryModelConfig` | `adapters` | 모듈→모델 해석 |
+| `PipelineControlAdapter`, `noopPipelineControl` | `adapters` | 취소/일시정지/비용 한도 |
+| `analyzeText`, `analyzeStructured` | `gateway` | AI Gateway 저수준 API |
+| `AnalyzeTextResult`, `AIGatewayOptions` | `gateway` | 게이트웨이 옵션/결과 타입 |
+| `normalizeUsage`, `NormalizedUsage` | `gateway` | usage 정규화 |
+| `PROVIDER_REGISTRY`, `AIProvider`, `AI_PROVIDER_VALUES` | `gateway` | 프로바이더 메타데이터 |
+| `getProvidersByAccess`, `isProxyCli`, `needsTextFallback` | `gateway` | 메타데이터 헬퍼 |
+| `AccessMethod`, `CallMethod`, `ProviderMeta` | `gateway` | 메타데이터 타입 |
 
 ### 서브경로
 

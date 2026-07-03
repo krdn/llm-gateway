@@ -1,4 +1,4 @@
-import { A as AIProvider } from '../provider-meta-BGU1PhSI.js';
+import { A as AIProvider } from '../provider-meta-DzMZPC6j.js';
 
 /**
  * 모듈 실행 시 사용할 모델/프로바이더/엔드포인트 정보.
@@ -11,6 +11,8 @@ interface ResolvedModelConfig {
     baseUrl?: string;
     apiKey?: string;
     maxOutputTokens?: number;
+    /** 모듈별 API 호출 타임아웃 (ms) — 미지정 시 게이트웨이 기본값(5분) */
+    timeoutMs?: number;
 }
 interface ModelConfigAdapter {
     resolve(moduleName: string): Promise<ResolvedModelConfig>;
