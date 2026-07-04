@@ -299,6 +299,12 @@ async function analyzeStructured(prompt, schema, options = {}) {
     prompt,
     schema,
     ...needsJsonMode2 ? { mode: "json" } : {},
+    // Anthropic은 classic tool_use(jsonTool)로 강제한다. 기본 'auto'는 신형
+    // output_config.format을 선택하는데, 이 경로는 JSON Schema 부분집합만 허용해
+    // number의 minimum/maximum, array의 minItems(>1) 등을 거부한다.
+    // classic tool_use는 표준 JSON Schema를 그대로 받으므로 스키마 제약이 보존되고,
+    // cli-proxy-api(Claude Max 플랜) 경유 시에도 구조화 출력이 정상 동작한다.
+    ...provider === "anthropic" ? { providerOptions: { anthropic: { structuredOutputMode: "jsonTool" } } } : {},
     maxOutputTokens: options.maxOutputTokens ?? 4096,
     abortSignal
   });
