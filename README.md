@@ -56,7 +56,7 @@ v1.x에서 12개 모듈을 사용하던 프로젝트는 모듈/스키마 정의�
 ```json
 {
   "dependencies": {
-    "@krdn/llm-gateway": "github:krdn/ai-analysis-kit#v3.0.0"
+    "@krdn/llm-gateway": "github:krdn/llm-gateway#v3.4.0"
   }
 }
 ```
@@ -207,6 +207,19 @@ import { ... } from '@krdn/llm-gateway/gateway';    // 게이트웨이만
 import { ... } from '@krdn/llm-gateway/runner';     // 러너만
 import { ... } from '@krdn/llm-gateway/adapters';   // 어댑터만
 ```
+
+## 구조화 출력 (Anthropic) — v3.4.0
+
+구조화 출력이 필요한 프로바이더는 `analyzeStructured`가 Vercel AI SDK의 `generateObject`로 처리한다(미지원 프로바이더는 `generateText` + JSON 파싱 폴백).
+
+**Anthropic은 `structuredOutputMode: 'jsonTool'`(classic tool_use)로 강제한다.** `@ai-sdk/anthropic`의 기본값 `auto`는 신형 `output_config.format`(Anthropic structured outputs)을 선택하는데, 이 경로는 JSON Schema 부분집합만 허용해 다음을 거부한다:
+
+- `number`의 `minimum` / `maximum`
+- `array`의 `minItems`(0 또는 1 외의 값)
+
+classic tool_use는 표준 JSON Schema를 그대로 받으므로 스키마 제약(`z.number().min().max()`, `z.array().min(2)` 등)이 보존되고, **`cli-proxy-api`(Claude Max 플랜 프록시) 경유 시에도** 구조화 출력이 정상 동작한다. anthropic 외 프로바이더는 provider-namespaced 옵션이라 영향 없음.
+
+> 소비 측(ai-signalcraft)에서 `provider: 'anthropic'` + `baseUrl`을 프록시로 지정하면 별도 설정 없이 이 동작이 적용된다.
 
 ## 라이선스
 

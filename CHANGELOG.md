@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.4.0 (2026-07-04)
+
+### Anthropic 구조화 출력을 classic tool_use(jsonTool)로 강제
+
+`analyzeStructured`에서 provider가 `anthropic`일 때 `structuredOutputMode: 'jsonTool'`을
+providerOptions로 전달한다.
+
+- `@ai-sdk/anthropic`의 기본값 `auto`는 신형 `output_config.format` 경로를 선택하는데,
+  이 경로는 JSON Schema 부분집합만 허용해 `number`의 `minimum`/`maximum`,
+  `array`의 `minItems`(>1) 등 제약을 거부한다.
+- classic `tool_use`(jsonTool)는 표준 JSON Schema를 그대로 받으므로 스키마 제약이 보존되고,
+  `cli-proxy-api`(Claude Max 플랜 프록시) 경유 시에도 구조화 출력이 정상 동작한다.
+- anthropic 외 프로바이더 동작은 변화 없음(provider-namespaced 옵션).
+
 ## 3.0.0 (2026-05-26)
 
 ### Package Rename
