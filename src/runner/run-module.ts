@@ -22,6 +22,19 @@ import { retryWithPolicy } from './retry-utils';
 const CANCEL_POLL_INTERVAL_MS = 5_000;
 
 /**
+ * 어댑터 호출을 fail-open으로 감싼다 — 비동기 reject뿐 아니라 **동기 throw**도
+ * 흡수한다 (`Promise.resolve(fn()).catch(...)`는 fn이 동기로 던지면 가드 밖으로
+ * 예외가 새어 나간다). 어댑터 일시 오류가 모듈 실행을 중단시키지 않기 위한 정책.
+ */
+async function failOpen<T>(fn: () => T | Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await fn();
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * runModule 옵션
  *
  * @template TInput 소비자 도메인 입력 타입 — 옵션 자체엔 직접 안 쓰이지만,
@@ -184,12 +197,9 @@ export async function runModule<TInput, TResult>(
 
     if (pipelineControl !== noopPipelineControl) {
       cancelPoll = setInterval(() => {
-        void pipelineControl
-          .isCancelled(jobId)
-          .then((cancelled) => {
-            if (cancelled) controller.abort(new Error('aborted'));
-          })
-          .catch(() => undefined);
+        void failOpen(() => pipelineControl.isCancelled(jobId), false).then((cancelled) => {
+          if (cancelled) controller.abort(new Error('aborted'));
+        });
       }, CANCEL_POLL_INTERVAL_MS);
       cancelPoll.unref?.();
     }
@@ -209,20 +219,18 @@ export async function runModule<TInput, TResult>(
       () => analyzeStructured(prompt, module.schema, gatewayOptions),
       {
         abortSignal: gatewaySignal,
-        // 어댑터 일시 오류는 '취소 아님'으로 간주(fail-open) — 취소 폴링
-        // 경로(isCancelled().catch(() => undefined))와 동일 정책
+        // 어댑터 일시 오류는 '취소 아님'으로 간주(fail-open) — 취소 폴링 경로와 동일 정책
         shouldAbort: () =>
-          gatewaySignal.aborted ||
-          Promise.resolve(pipelineControl.isCancelled(jobId)).catch(() => false),
+          gatewaySignal.aborted || failOpen(() => pipelineControl.isCancelled(jobId), false),
         onRetry: async ({ attempt, backoffMs, type }) => {
-          // waitIfPaused 실패가 원본 429 에러를 대체해 던져지며 재시도 예산이
-          // 남았는데도 중단되는 것을 방지 (가드)
-          await Promise.resolve(pipelineControl.waitIfPaused(jobId)).catch(() => undefined);
+          // onRetry 안의 어댑터 실패(waitIfPaused/appendEvent)가 원본 429 에러를
+          // 대체해 던져지며 재시도 예산이 남았는데도 중단되는 것을 방지 (가드)
+          await failOpen(() => pipelineControl.waitIfPaused(jobId), undefined);
           const msg = type === 'rate-limit'
             ? `${module.name}: Rate limit, ${Math.round(backoffMs / 1000)}초 후 재시도 (${attempt})`
             : `${module.name}: 서버 과부하, ${Math.round(backoffMs / 1000)}초 후 재시도`;
           safeProgress({ module: module.name, phase: 'retry', message: msg, attempt });
-          await pipelineControl.appendEvent(jobId, 'warn', msg).catch(() => undefined);
+          await failOpen(() => pipelineControl.appendEvent(jobId, 'warn', msg), undefined);
         },
       },
     );

@@ -674,6 +674,13 @@ async function retryWithPolicy(fn, options) {
 
 // src/runner/run-module.ts
 var CANCEL_POLL_INTERVAL_MS = 5e3;
+async function failOpen(fn, fallback) {
+  try {
+    return await fn();
+  } catch {
+    return fallback;
+  }
+}
 async function runModule(module, input, options = {}) {
   const pipelineControl = options.pipelineControl ?? noopPipelineControl;
   const onPersist = options.onPersist ?? (async () => void 0);
@@ -726,9 +733,9 @@ async function runModule(module, input, options = {}) {
     const gatewaySignal = options.abortSignal ? AbortSignal.any([options.abortSignal, controller.signal]) : controller.signal;
     if (pipelineControl !== noopPipelineControl) {
       cancelPoll = setInterval(() => {
-        void pipelineControl.isCancelled(jobId).then((cancelled) => {
+        void failOpen(() => pipelineControl.isCancelled(jobId), false).then((cancelled) => {
           if (cancelled) controller.abort(new Error("aborted"));
-        }).catch(() => void 0);
+        });
       }, CANCEL_POLL_INTERVAL_MS);
       cancelPoll.unref?.();
     }
@@ -746,14 +753,13 @@ async function runModule(module, input, options = {}) {
       () => analyzeStructured(prompt, module.schema, gatewayOptions),
       {
         abortSignal: gatewaySignal,
-        // 어댑터 일시 오류는 '취소 아님'으로 간주(fail-open) — 취소 폴링
-        // 경로(isCancelled().catch(() => undefined))와 동일 정책
-        shouldAbort: () => gatewaySignal.aborted || Promise.resolve(pipelineControl.isCancelled(jobId)).catch(() => false),
+        // 어댑터 일시 오류는 '취소 아님'으로 간주(fail-open) — 취소 폴링 경로와 동일 정책
+        shouldAbort: () => gatewaySignal.aborted || failOpen(() => pipelineControl.isCancelled(jobId), false),
         onRetry: async ({ attempt, backoffMs, type }) => {
-          await Promise.resolve(pipelineControl.waitIfPaused(jobId)).catch(() => void 0);
+          await failOpen(() => pipelineControl.waitIfPaused(jobId), void 0);
           const msg = type === "rate-limit" ? `${module.name}: Rate limit, ${Math.round(backoffMs / 1e3)}\uCD08 \uD6C4 \uC7AC\uC2DC\uB3C4 (${attempt})` : `${module.name}: \uC11C\uBC84 \uACFC\uBD80\uD558, ${Math.round(backoffMs / 1e3)}\uCD08 \uD6C4 \uC7AC\uC2DC\uB3C4`;
           safeProgress({ module: module.name, phase: "retry", message: msg, attempt });
-          await pipelineControl.appendEvent(jobId, "warn", msg).catch(() => void 0);
+          await failOpen(() => pipelineControl.appendEvent(jobId, "warn", msg), void 0);
         }
       }
     );

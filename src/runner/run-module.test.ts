@@ -353,5 +353,52 @@ describe('runModule', () => {
         vi.useRealTimers();
       }
     });
+
+    it('isCancelled가 동기적으로 throw해도 fail-open (Promise가 아닌 즉시 예외)', async () => {
+      mockGatewaySuccess();
+
+      const result = await runModule(testModule, ['x'], {
+        pipelineControl: {
+          ...noopPipelineControl,
+          // async가 아닌 동기 throw — Promise.resolve(fn()).catch() 패턴은 못 잡는 케이스
+          isCancelled: () => {
+            throw new Error('동기 어댑터 버그');
+          },
+        },
+      });
+
+      expect(result.status).toBe('completed');
+      expect(analyzeStructured).toHaveBeenCalled();
+    });
+
+    it('재시도 중 waitIfPaused가 동기적으로 throw해도 재시도가 계속된다', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(analyzeStructured)
+          .mockRejectedValueOnce(new Error('429 rate limit'))
+          .mockResolvedValue({
+            object: { summary: 'ok' },
+            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            finishReason: 'stop',
+          } as Awaited<ReturnType<typeof analyzeStructured>>);
+
+        const promise = runModule(testModule, ['x'], {
+          pipelineControl: {
+            ...noopPipelineControl,
+            waitIfPaused: () => {
+              throw new Error('동기 pause 어댑터 버그');
+            },
+          },
+        });
+
+        await vi.runAllTimersAsync();
+        const result = await promise;
+
+        expect(result.status).toBe('completed');
+        expect(analyzeStructured).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
