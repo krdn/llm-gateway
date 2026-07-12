@@ -40,10 +40,11 @@ jobs:
       fail-fast: false
       matrix:
         repo:
-          # ai-signalcraft는 dispatch 미등록 — CONSUMER_DISPATCH_PAT가 접근 불가했고
-          # 수신 워크플로도 구 계약이라 영구 미발화였음. npm range(^x)로 전환돼
-          # Dependabot(daily)이 업데이트 PR을 생성하는 단일 경로로 일원화.
           - krdn/gons-dashboard
+          # ai-signalcraft 수신측은 update-llm-gateway.yml(llm-gateway-release 계약)로
+          # 복원됨. CONSUMER_DISPATCH_PAT 재발급 전까지 이 dispatch는 실패하지만
+          # fail-fast:false라 다른 소비자에 영향 없고, 수신측 daily cron이 백업 경로.
+          - krdn/ai-signalcraft
     steps:
       - name: Dispatch release event to ${{ matrix.repo }}
         uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3
