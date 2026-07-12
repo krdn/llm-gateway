@@ -173,9 +173,10 @@ export async function runModule<TInput, TResult>(
       const errorMessage = '비용 한도 초과 — 모듈 실행 중단';
       safeProgress({ module: module.name, phase: 'fail', message: errorMessage });
       await safePersist({ jobId, module: module.name, status: 'failed', errorMessage });
-      await pipelineControl
-        .appendEvent(jobId, 'warn', `${module.name}: ${errorMessage}`)
-        .catch(() => undefined);
+      await failOpen(
+        () => pipelineControl.appendEvent(jobId, 'warn', `${module.name}: ${errorMessage}`),
+        undefined,
+      );
       return { module: module.name, status: 'failed', errorMessage };
     }
 
@@ -289,9 +290,11 @@ export async function runModule<TInput, TResult>(
       errorMessage,
       ...(failedUsage ? { usage: failedUsage } : {}),
     });
-    await pipelineControl
-      .appendEvent(jobId, 'error', `${module.name} 분석 실패: ${errorMessage}`)
-      .catch(() => undefined);
+    // catch 블록 안이므로 동기 throw가 새면 runModule의 never-throw 계약이 깨진다
+    await failOpen(
+      () => pipelineControl.appendEvent(jobId, 'error', `${module.name} 분석 실패: ${errorMessage}`),
+      undefined,
+    );
 
     return {
       module: module.name,

@@ -354,6 +354,24 @@ describe('runModule', () => {
       }
     });
 
+    it('실패 경로의 appendEvent가 동기적으로 throw해도 never-throw 계약 유지 (원본 에러 보존)', async () => {
+      vi.mocked(analyzeStructured).mockRejectedValue(new Error('API 폭발'));
+
+      // catch 블록 안의 appendEvent 동기 throw — 가드가 없으면 runModule 밖으로 새어
+      // never-throw 계약이 깨진다
+      const result = await runModule(testModule, ['x'], {
+        pipelineControl: {
+          ...noopPipelineControl,
+          appendEvent: () => {
+            throw new Error('동기 로그 어댑터 버그');
+          },
+        },
+      });
+
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') expect(result.errorMessage).toBe('API 폭발');
+    });
+
     it('isCancelled가 동기적으로 throw해도 fail-open (Promise가 아닌 즉시 예외)', async () => {
       mockGatewaySuccess();
 

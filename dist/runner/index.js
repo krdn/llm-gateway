@@ -648,7 +648,10 @@ async function runModule(module, input, options = {}) {
       const errorMessage = "\uBE44\uC6A9 \uD55C\uB3C4 \uCD08\uACFC \u2014 \uBAA8\uB4C8 \uC2E4\uD589 \uC911\uB2E8";
       safeProgress({ module: module.name, phase: "fail", message: errorMessage });
       await safePersist({ jobId, module: module.name, status: "failed", errorMessage });
-      await pipelineControl.appendEvent(jobId, "warn", `${module.name}: ${errorMessage}`).catch(() => void 0);
+      await failOpen(
+        () => pipelineControl.appendEvent(jobId, "warn", `${module.name}: ${errorMessage}`),
+        void 0
+      );
       return { module: module.name, status: "failed", errorMessage };
     }
     await safePersist({ jobId, module: module.name, status: "running" });
@@ -729,7 +732,10 @@ async function runModule(module, input, options = {}) {
       errorMessage,
       ...failedUsage ? { usage: failedUsage } : {}
     });
-    await pipelineControl.appendEvent(jobId, "error", `${module.name} \uBD84\uC11D \uC2E4\uD328: ${errorMessage}`).catch(() => void 0);
+    await failOpen(
+      () => pipelineControl.appendEvent(jobId, "error", `${module.name} \uBD84\uC11D \uC2E4\uD328: ${errorMessage}`),
+      void 0
+    );
     return {
       module: module.name,
       status: "failed",
