@@ -1,6 +1,6 @@
 import { FinishReason, LanguageModelUsage } from 'ai';
-import { N as NormalizedUsage } from '../normalize-usage-DYEF9hAT.js';
-export { n as normalizeUsage } from '../normalize-usage-DYEF9hAT.js';
+import { N as NormalizedUsage } from '../normalize-usage-sTTPLOZv.js';
+export { n as normalizeUsage } from '../normalize-usage-sTTPLOZv.js';
 import { z } from 'zod';
 import { A as AIProvider } from '../provider-meta-BkGweTb-.js';
 export { a as AI_PROVIDER_VALUES, b as AccessMethod, C as CallMethod, P as PROVIDER_REGISTRY, c as ProviderMeta, g as getProvidersByAccess, i as isProxyCli, n as needsTextFallback } from '../provider-meta-BkGweTb-.js';

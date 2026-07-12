@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.0.1 (2026-07-12)
+
+- `NormalizedUsage`를 interface → type으로 변경 — interface는 선언 병합 가능성
+  때문에 `Record<string, unknown>`에 할당되지 않아, usage를 범용 로깅/persist
+  함수에 넘기는 소비자 코드가 v4.0.0에서 컴파일 에러를 맞았다(gons-dashboard
+  auto-update typecheck에서 실측). 런타임 변화 없음. `ModuleUsage`(교차 타입)의
+  할당성도 함께 복원된다.
+
 ## 4.0.0 (2026-07-12)
 
 전면 리팩토링 릴리스 — 침묵 폴백 제거, 타입 강화, 취소/재시도 신뢰성 개선.
