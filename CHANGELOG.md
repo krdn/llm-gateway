@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.0.0 (2026-07-04)
+## 4.0.0 (unreleased — main 병합·릴리스 대기)
 
 전면 리팩토링 릴리스 — 침묵 폴백 제거, 타입 강화, 취소/재시도 신뢰성 개선.
 
@@ -61,6 +61,20 @@
 - 패키징: zod 이중 선언 해소(peer+dev만), `sideEffects: false`, npm provenance,
   `packageManager` 필드. CI에 lint 게이트 추가. 소비자 dispatch가 publish 성공 이후에만 발송.
 
+## 3.4.0 (2026-07-04)
+
+### Anthropic 구조화 출력을 classic tool_use(jsonTool)로 강제
+
+`analyzeStructured`에서 provider가 `anthropic`일 때 `structuredOutputMode: 'jsonTool'`을
+providerOptions로 전달한다.
+
+- `@ai-sdk/anthropic`의 기본값 `auto`는 신형 `output_config.format` 경로를 선택하는데,
+  이 경로는 JSON Schema 부분집합만 허용해 `number`의 `minimum`/`maximum`,
+  `array`의 `minItems`(>1) 등 제약을 거부한다.
+- classic `tool_use`(jsonTool)는 표준 JSON Schema를 그대로 받으므로 스키마 제약이 보존되고,
+  `cli-proxy-api`(Claude Max 플랜 프록시) 경유 시에도 구조화 출력이 정상 동작한다.
+- anthropic 외 프로바이더 동작은 변화 없음(provider-namespaced 옵션).
+
 ## 3.3.0 (2026-05-27)
 
 - refactor: `gateway.ts`에서 `model-factory.ts`(getModel/SDK_MAP/DEFAULT_MODELS),
@@ -70,17 +84,21 @@
   `normalizeUsage`를 `normalize-usage.ts`로 추출 (commit 3866f98, 태그 이후).
 - ci: repository-dispatch action SHA 고정 (supply-chain 보안), dispatch 계약 통합.
 
-## 3.2.0 (2026-05-27)
+## 3.2.0 (2026-05-27) — git tag만, npm 미배포
 
 - **BREAKING**: `ConcurrencyAdapter`, `createStaticConcurrency`(adapters),
   `runWithProviderGrouping`(runner) 제거. 동시성 제어는 소비자 측에서
   p-limit 등으로 직접 처리.
 - test: extractJson/repairTruncatedJson, analyzeStructured 2단계 파이프라인 테스트 대폭 추가.
 
-## 3.1.0 (2026-05-27)
+## 3.1.0 (2026-05-27) — git tag만, npm 미배포
 
 - refactor: `getModel()`을 `PROVIDER_REGISTRY` 기반 레지스트리 디스패처로 재구성 (API 변경 없음).
 - ci: npm publish + 소비자 자동 업데이트 워크플로우 추가.
+
+## 3.0.1 — npm 배포본 (소급 기입)
+
+- npm에 배포된 패치 릴리스. git tag·커밋 기록이 없어 상세 내역은 남아 있지 않다.
 
 ## 3.0.0 (2026-05-26)
 

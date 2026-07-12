@@ -30,8 +30,12 @@
 ## 설치
 
 ```bash
-pnpm add @krdn/llm-gateway zod
+pnpm add @krdn/llm-gateway zod@^3.24
 ```
+
+> **zod는 3.x 전용** (`^3.24`) — zod 4는 미지원. 배포 타입 선언이 zod 3의 `z.ZodTypeDef`를 사용하고,
+> text2step 폴백이 의존하는 `zod-to-json-schema`가 zod 4 스키마를 지원하지 않는다.
+> pnpm은 peer 불일치를 **경고만** 하고 설치를 진행하므로, zod 4를 설치하면 typecheck/런타임 오류로 직행한다.
 
 `gemini-cli` 프로바이더를 쓸 경우에만 추가로:
 
@@ -205,6 +209,19 @@ import { ... } from '@krdn/llm-gateway/gateway';    // 게이트웨이만
 import { ... } from '@krdn/llm-gateway/runner';     // 러너만
 import { ... } from '@krdn/llm-gateway/adapters';   // 어댑터만
 ```
+
+## 구조화 출력 (Anthropic) — v3.4.0
+
+구조화 출력을 네이티브 지원하는 프로바이더는 `analyzeStructured`가 Vercel AI SDK v6의 `generateText` + `Output.object`로 처리한다(미지원 프로바이더는 text2step — `generateText` 2회 + JSON 파싱).
+
+**Anthropic은 `structuredOutputMode: 'jsonTool'`(classic tool_use)로 강제한다.** `@ai-sdk/anthropic`의 기본값 `auto`는 신형 `output_config.format`(Anthropic structured outputs)을 선택하는데, 이 경로는 JSON Schema 부분집합만 허용해 다음을 거부한다:
+
+- `number`의 `minimum` / `maximum`
+- `array`의 `minItems`(0 또는 1 외의 값)
+
+classic tool_use는 표준 JSON Schema를 그대로 받으므로 스키마 제약(`z.number().min().max()`, `z.array().min(2)` 등)이 보존되고, **`cli-proxy-api`(Claude Max 플랜 프록시) 경유 시에도** 구조화 출력이 정상 동작한다. anthropic 외 프로바이더는 provider-namespaced 옵션이라 영향 없음.
+
+> 소비 측(ai-signalcraft)에서 `provider: 'anthropic'` + `baseUrl`을 프록시로 지정하면 별도 설정 없이 이 동작이 적용된다.
 
 ## 라이선스
 

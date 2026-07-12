@@ -48,6 +48,34 @@ describe('executeStructured', () => {
       expect(call.output).toBeDefined();
     });
 
+    it('anthropic은 providerOptions로 structuredOutputMode jsonTool을 강제한다 (v3.4.0 회귀 방지)', async () => {
+      vi.mocked(generateText).mockResolvedValueOnce({
+        output: { summary: 'ok', score: 1 },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: 'stop',
+      } as unknown as Awaited<ReturnType<typeof generateText>>);
+
+      await executeStructured('anthropic', mockModel, TestSchema, baseOpts);
+
+      const call = vi.mocked(generateText).mock.calls[0][0] as Record<string, unknown>;
+      expect(call.providerOptions).toEqual({
+        anthropic: { structuredOutputMode: 'jsonTool' },
+      });
+    });
+
+    it('anthropic 외 네이티브 프로바이더에는 providerOptions를 전달하지 않는다', async () => {
+      vi.mocked(generateText).mockResolvedValueOnce({
+        output: { summary: 'ok', score: 1 },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: 'stop',
+      } as unknown as Awaited<ReturnType<typeof generateText>>);
+
+      await executeStructured('openai', mockModel, TestSchema, baseOpts);
+
+      const call = vi.mocked(generateText).mock.calls[0][0] as Record<string, unknown>;
+      expect(call.providerOptions).toBeUndefined();
+    });
+
     it('usage를 NormalizedUsage로 정규화한다 (totalTokens 미제공 시 합산)', async () => {
       // totalTokens를 일부러 omit → raw passthrough면 totalTokens가 undefined가 되어 실패
       vi.mocked(generateText).mockResolvedValueOnce({
