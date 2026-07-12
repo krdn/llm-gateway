@@ -10,7 +10,7 @@
 - **Vercel AI SDK v6** 기반 구조화 출력 (`generateText` + `Output.object`) + 미지원 프로바이더용 텍스트 2-call 폴백 (잘린 JSON 자동 복구 포함)
 - **제네릭 모듈 엔진**: `AnalysisModule<TInput, TResult>` — 입력/결과 모두 도메인 자유
 - **어댑터 패턴**: `ModelConfigAdapter`, `PipelineControlAdapter` — DB·취소·비용 한도 의존성을 인터페이스로 추상화
-- **Rate limit / 서버 과부하 자동 재시도** (exponential backoff, retry-after 상한으로 일일 쿼터 폭주 방지)
+- **Rate limit / 서버 과부하 자동 재시도** (선형 backoff — attempt × 3s, retry-after 안내가 있으면 그 값과 큰 쪽; retry-after 상한으로 일일 쿼터 폭주 방지)
 - **부분 실패 허용** — 실패한 모듈도 throw하지 않고 `failed` 상태 반환 (discriminated union)
 - **취소/타임아웃 전파** — `abortSignal`/`timeoutMs`가 진행 중인 LLM 호출까지 중단
 
@@ -21,7 +21,9 @@
 - 잘못된 설정을 침묵으로 가리던 폴백 제거 — 알 수 없는 provider·기본 모델 없는 provider의 model 미지정·`custom`의 baseUrl 누락·유료 API의 apiKey 누락은 **명시적 에러**
 - `analyzeText`의 usage에 정규화 필드(`inputTokens`/`outputTokens`/`totalTokens`) 보장 (원본 필드는 보존)
 - 라이브러리가 콘솔에 로그를 찍지 않음 — 진단 정보는 에러 메시지와 `onProgress` 콜백으로 전달
-- `gemini-cli` 사용 시 `ai-sdk-provider-gemini-cli`를 소비자가 직접 설치 (선택적 peerDependency)
+- `gemini-cli` 사용 시 `ai-sdk-provider-gemini-cli`를 소비자가 직접 설치 (선택적 peerDependency).
+  **로컬 `~/.gemini` OAuth 전용** — `baseUrl`/`apiKey`는 무시되며 cli-proxy-api 등 프록시와 무관한 별도 크레덴셜/쿼터 경로. 프록시의 Gemini 모델은 `custom` 프로바이더 + `baseUrl` + 프록시 키로 호출
+- `claude-cli`(cli-proxy-api)는 **apiKey 필수** — 프록시가 `config.yaml`의 `api-keys`로 Bearer 토큰을 검증하므로, 등록된 키를 `apiKey`로 전달해야 한다 (미전달 시 명시적 에러; 기존 기본값 `'cli-proxy'`는 v4.0.0에서 제거됨)
 - `requiresJsonMode`/`needsJsonMode` 제거 (AI SDK v6가 모드를 내부 선택)
 - Node **20.3.0 이상** 필요 (`AbortSignal.any`)
 

@@ -27,7 +27,12 @@ export interface InMemoryModelConfigOptions {
   modules: Record<string, { provider: AIProvider; model: string }>;
   /** 모듈별 부분 오버라이드 */
   overrides?: Partial<Record<string, Partial<ResolvedModelConfig>>>;
-  /** 프로바이더별 공통 apiKey/baseUrl */
+  /**
+   * 프로바이더별 공통 apiKey/baseUrl/model.
+   * `model`은 override로 provider를 전환해 base.model이 새 프로바이더에서
+   * 무효해진 경우에만 구제용으로 적용된다 — provider를 바꾸지 않은 평상시엔
+   * base.model이 유지되고 providerDefaults.model은 무시된다.
+   */
   providerDefaults?: Partial<
     Record<AIProvider, { apiKey?: string; baseUrl?: string; model?: string }>
   >;
@@ -60,7 +65,12 @@ export function createInMemoryModelConfig(
       const provider = override.provider ?? base.provider;
       const providerDefault = providerDefaults[provider] ?? {};
 
-      const model = override.model ?? providerDefault.model ?? base.model;
+      // providerDefault.model은 provider를 전환한 경우에만 구제용으로 적용한다
+      // (동일 provider에서 base.model을 조용히 덮어쓰지 않도록)
+      const model =
+        override.model ??
+        (provider !== base.provider ? providerDefault.model : undefined) ??
+        base.model;
       const apiKey =
         override.apiKey ?? providerDefault.apiKey ?? resolveApiKeyFromEnv(provider);
       const baseUrl = override.baseUrl ?? providerDefault.baseUrl;
@@ -84,6 +94,8 @@ function resolveApiKeyFromEnv(provider: AIProvider): string | undefined {
   switch (provider) {
     case 'anthropic':
       return env.ANTHROPIC_API_KEY;
+    case 'claude-cli':
+      return env.CLI_PROXY_API_KEY;
     case 'openai':
       return env.OPENAI_API_KEY;
     case 'gemini':

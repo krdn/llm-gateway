@@ -25,6 +25,18 @@
   모드를 내부 선택하므로 개념 자체가 소멸.
 - **`PROVIDER_REGISTRY`가 읽기 전용 타입으로 변경** — 레지스트리를 변조하던 코드는 컴파일 에러.
 - **Node 20.3.0 이상 필요** (`AbortSignal.any` 사용).
+- **`claude-cli`의 `defaultApiKey: 'cli-proxy'` 제거, `requiresApiKey: true`로 교정** —
+  cli-proxy-api는 config.yaml `api-keys`로 Bearer 토큰을 항상 검증하므로 기본 키는
+  결정론적 401이었다. 마이그레이션: 프록시에 등록된 키를 `options.apiKey`로 전달하거나,
+  어댑터 경로는 `CLI_PROXY_API_KEY` 환경변수 사용 (`resolveApiKeyFromEnv` 신규 지원).
+- **`gemini-cli` 메타데이터 교정**: displayName 'Gemini CLI (Local OAuth)',
+  `accessMethod: 'proxy-cli'` → `'local'` — 이 프로바이더는 로컬 `~/.gemini` OAuth
+  전용이며 `baseUrl`/`apiKey`가 무시된다(cli-proxy-api와 무관). `isProxyCli('gemini-cli')`가
+  이제 `false`를 반환. 프록시의 Gemini 모델은 `custom` 프로바이더로 호출할 것.
+- **`createInMemoryModelConfig`의 `providerDefaults.model` 적용 조건 변경** —
+  override로 provider를 전환해 base.model이 무효해진 경우에만 적용
+  (기존: 동일 provider에서도 모듈별 model을 조용히 덮어썼음).
+- `openai.defaultBaseUrl` 제거 (getModel이 읽지 않는 죽은 데이터였음).
 
 ### 개선 (하위 호환)
 
@@ -50,6 +62,24 @@
   파싱/검증 사유와 finishReason을 에러에 포함.
 - `mergeAbortSignals`를 `AbortSignal.any`로 교체 — 이미 abort된 외부 signal 즉시 반영,
   호출 완료 후 최대 5분간 이벤트 루프를 붙잡던 타이머 누수 제거.
+- `extractJson`을 탐욕 정규식에서 **이스케이프 인지 균형 스캔**으로 교체 —
+  문자열 값 안의 `}`/`]`를 JSON 경계로 오인해 절단 복구 가능한 응답을 `{}`로
+  만들던 silent data loss와, JSON 뒤 산문의 중괄호로 인한 파싱 실패 수정.
+- text2step 이중 실패 시 **`StructuredOutputError`**(신규 export)로 두 호출의
+  usage 합산을 보존 — `runModule`이 이를 감지해 `failed` 결과와 `PersistEvent`에
+  `usage?: ModuleUsage`를 실어 실패한 분석도 비용 집계에 포함 (native 경로의
+  `NoObjectGeneratedError.usage`도 동일 처리). optional 필드 추가라 하위 호환.
+- 재시도 backoff sleep이 abort-aware가 됨 — 취소 후 최대 5분(MAX_RETRY_AFTER_MS)
+  pending으로 남던 문제 수정 (`RetryPolicyOptions.abortSignal` 신규).
+- `onPersist('running')`에 safePersist 가드 적용 — persist 일시 실패가 문서화된
+  never-interrupt 계약을 깨고 LLM 호출 없이 모듈을 failed 처리하던 누락 수정.
+- `shouldAbort`의 `isCancelled`·`onRetry`의 `waitIfPaused`에 fail-open 가드 —
+  어댑터 일시 오류가 재시도 가능한 모듈을 엉뚱한 사유로 즉사시키지 않음.
+- `timeoutMs`에 0/음수/Infinity 방어 — 유효하지 않은 값은 기본 5분으로 대체
+  (기존: 0이면 즉시 abort, Infinity면 RangeError).
+- Anthropic 구조화 출력 jsonTool 강제(v3.4.0)를 전략 구조(`executeNative`)로 포팅.
+- 레지스트리 불변식을 `provider-meta.test.ts`로 강제 (requiresApiKey ⇒ defaultApiKey 없음 등).
+- CI: publish 잡의 전 액션 SHA 고정, notify matrix `fail-fast: false`.
 - 네이티브 구조화 출력을 deprecated `generateObject`에서 `generateText` + `Output.object`로 이행.
 - `createInMemoryModelConfig`: override로 provider를 바꾸면 바뀐 provider의
   providerDefaults가 적용되도록 수정 (기존: 원래 provider의 defaults 적용 버그).

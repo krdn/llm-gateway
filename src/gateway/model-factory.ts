@@ -65,6 +65,9 @@ export async function getModel(
     );
   }
 
+  // gemini-cli는 로컬 ~/.gemini OAuth 전용 경로 — baseUrl/apiKey 인자는 사용되지
+  // 않는다 (cli-proxy-api 등 프록시와 무관한 별도 크레덴셜/쿼터).
+  // 프록시의 Gemini 모델이 필요하면 custom 프로바이더 + baseUrl + 프록시 키를 쓸 것.
   if (provider === 'gemini-cli') {
     const mod = await import('ai-sdk-provider-gemini-cli').catch((err: unknown) => {
       throw new Error(

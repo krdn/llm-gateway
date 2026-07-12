@@ -5,8 +5,10 @@ import type { z } from 'zod';
  *
  * 추출 우선순위:
  *   1. ```json ... ``` 또는 ``` ... ``` 코드블록 내부
- *   2. 최외곽 `{...}` 또는 `[...]`
- *   3. 위 둘 다 실패 시 입력 문자열 전체 (trim)
+ *   2. 첫 여는 `{`/`[`부터 괄호 균형이 0이 되는 지점까지 (이스케이프 인지
+ *      스캔 — 문자열 값 안의 `}`/`]`를 경계로 오인하지 않음). 끝까지 균형이
+ *      안 맞으면(토큰 절단) 문자열 끝까지 취해 복구 단계로 넘긴다.
+ *   3. 여는 괄호가 없으면 입력 문자열 전체 (trim)
  *
  * 추출 후 `JSON.parse`로 유효성을 검사하고, 실패 시
  * `repairTruncatedJson()`으로 토큰 초과로 잘린 응답을 복구한다.
@@ -17,8 +19,7 @@ export function extractJson(text: string): string {
   if (codeBlockMatch) {
     json = codeBlockMatch[1].trim();
   } else {
-    const jsonMatch = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-    json = jsonMatch ? jsonMatch[1].trim() : text.trim();
+    json = extractBalancedSlice(text);
   }
 
   try {
@@ -27,6 +28,45 @@ export function extractJson(text: string): string {
   } catch {
     return repairTruncatedJson(json);
   }
+}
+
+/**
+ * 첫 여는 `{`/`[`부터 이스케이프 인지 스캔으로 괄호 균형이 0으로 돌아오는
+ * 지점까지를 추출한다. 탐욕적 정규식(첫 `{` ~ 마지막 `}`)과 달리 문자열 값
+ * 안의 괄호나 JSON 뒤에 오는 산문의 괄호에 오염되지 않는다.
+ * 균형이 끝까지 안 맞으면(절단된 응답) 문자열 끝까지 반환하고,
+ * 여는 괄호가 없으면 전체를 trim해 반환한다.
+ */
+function extractBalancedSlice(text: string): string {
+  const start = text.search(/[{[]/);
+  if (start === -1) return text.trim();
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (inString) {
+      if (ch === '\\') escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{' || ch === '[') {
+      depth++;
+    } else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return text.slice(start);
 }
 
 /** 이스케이프 인지 단일 전방 스캔 결과 */

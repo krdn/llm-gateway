@@ -32,9 +32,11 @@ export interface ProviderMeta {
   /** SDK 클라이언트 호출 방식: 'direct' = client(model), 'chat' = client.chat(model) */
   readonly callMethod: CallMethod;
   /**
-   * API 키 미전달 시 기본값 — 키를 검사하지 않는 로컬/프록시 서버 전용
-   * (ollama → 'ollama', claude-cli → 'cli-proxy'). requiresApiKey: true인
-   * 프로바이더에는 두지 않는다 (가짜 키를 유료 API에 보내는 사고 방지).
+   * API 키 미전달 시 기본값 — 키를 검사하지 않는 로컬 서버 전용
+   * (ollama/custom → 'ollama'). requiresApiKey: true인 프로바이더에는
+   * 두지 않는다 (가짜 키를 유료 API에 보내는 사고 방지).
+   * 주의: cli-proxy-api는 config.yaml의 api-keys로 Bearer 토큰을 항상
+   * 검증하므로 claude-cli는 defaultApiKey 대상이 아니다 (apiKey 필수).
    */
   readonly defaultApiKey?: string;
   readonly color: string;
@@ -58,7 +60,6 @@ export const PROVIDER_REGISTRY: Readonly<Record<AIProvider, ProviderMeta>> = {
     accessMethod: 'direct-api',
     requiresApiKey: true,
     requiresBaseUrl: false,
-    defaultBaseUrl: 'https://api.openai.com/v1',
     supportsStructuredOutput: true,
     callMethod: 'direct',
     color: 'bg-green-500',
@@ -112,18 +113,21 @@ export const PROVIDER_REGISTRY: Readonly<Record<AIProvider, ProviderMeta>> = {
     type: 'claude-cli',
     displayName: 'Claude CLI (Proxy)',
     accessMethod: 'proxy-cli',
-    requiresApiKey: false,
+    // cli-proxy-api는 config.yaml의 api-keys로 Bearer 토큰을 항상 검증한다.
+    // 프록시 config에 등록된 키를 options.apiKey로 전달해야 한다 (미전달 시 명시 에러).
+    requiresApiKey: true,
     requiresBaseUrl: true,
     defaultBaseUrl: 'http://localhost:8317',
     supportsStructuredOutput: false,
     callMethod: 'chat',
-    defaultApiKey: 'cli-proxy',
     color: 'bg-amber-500',
   },
+  // ai-sdk-provider-gemini-cli 경유 — 로컬 ~/.gemini OAuth를 직접 사용한다.
+  // baseUrl/apiKey는 무시되며 cli-proxy-api와 무관한 별도 크레덴셜/쿼터 경로.
   'gemini-cli': {
     type: 'gemini-cli',
-    displayName: 'Gemini CLI (Proxy)',
-    accessMethod: 'proxy-cli',
+    displayName: 'Gemini CLI (Local OAuth)',
+    accessMethod: 'local',
     requiresApiKey: false,
     requiresBaseUrl: false,
     supportsStructuredOutput: false,

@@ -6,6 +6,7 @@ describe('createInMemoryModelConfig', () => {
 
   beforeEach(() => {
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.CLI_PROXY_API_KEY;
     delete process.env.OPENAI_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -57,6 +58,17 @@ describe('createInMemoryModelConfig', () => {
     expect(cfg.model).toBe('gpt-4.1-nano');
   });
 
+  it('동일 provider에서는 providerDefaults.model이 있어도 base.model 유지', async () => {
+    const adapter = createInMemoryModelConfig({
+      modules: { mod: { provider: 'anthropic', model: 'claude-sonnet-4-6' } },
+      providerDefaults: { anthropic: { model: 'claude-opus-4-8' } },
+    });
+    const cfg = await adapter.resolve('mod');
+    // provider 전환이 없으므로 providerDefaults.model이 base.model을 덮지 않음
+    expect(cfg.provider).toBe('anthropic');
+    expect(cfg.model).toBe('claude-sonnet-4-6');
+  });
+
   it('override.timeoutMs 반영', async () => {
     const adapter = createInMemoryModelConfig({
       modules: { mod: { provider: 'anthropic', model: 'claude-sonnet-4-6' } },
@@ -73,6 +85,15 @@ describe('createInMemoryModelConfig', () => {
     });
     const cfg = await adapter.resolve('mod');
     expect(cfg.apiKey).toBe('sk-ant-test');
+  });
+
+  it('환경변수에서 apiKey 자동 추론 (claude-cli → CLI_PROXY_API_KEY)', async () => {
+    process.env.CLI_PROXY_API_KEY = 'my-proxy-key';
+    const adapter = createInMemoryModelConfig({
+      modules: { mod: { provider: 'claude-cli', model: 'claude-sonnet-4-6' } },
+    });
+    const cfg = await adapter.resolve('mod');
+    expect(cfg.apiKey).toBe('my-proxy-key');
   });
 
   it('환경변수 GOOGLE_GENERATIVE_AI_API_KEY 우선, GEMINI_API_KEY 폴백', async () => {

@@ -12,7 +12,7 @@ function createInMemoryModelConfig(options) {
       const override = overrides[moduleName] ?? {};
       const provider = override.provider ?? base.provider;
       const providerDefault = providerDefaults[provider] ?? {};
-      const model = override.model ?? providerDefault.model ?? base.model;
+      const model = override.model ?? (provider !== base.provider ? providerDefault.model : void 0) ?? base.model;
       const apiKey = override.apiKey ?? providerDefault.apiKey ?? resolveApiKeyFromEnv(provider);
       const baseUrl = override.baseUrl ?? providerDefault.baseUrl;
       const maxOutputTokens = override.maxOutputTokens;
@@ -33,6 +33,8 @@ function resolveApiKeyFromEnv(provider) {
   switch (provider) {
     case "anthropic":
       return env.ANTHROPIC_API_KEY;
+    case "claude-cli":
+      return env.CLI_PROXY_API_KEY;
     case "openai":
       return env.OPENAI_API_KEY;
     case "gemini":

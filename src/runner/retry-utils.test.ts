@@ -146,6 +146,19 @@ describe('sleep', () => {
     await sleep(20);
     expect(Date.now() - start).toBeGreaterThanOrEqual(15);
   });
+
+  it('이미 abort된 signal이면 즉시 reject(aborted)', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(sleep(10_000, controller.signal)).rejects.toThrow('aborted');
+  });
+
+  it('대기 중 abort하면 즉시 reject(aborted)', async () => {
+    const controller = new AbortController();
+    const p = sleep(10_000, controller.signal);
+    controller.abort();
+    await expect(p).rejects.toThrow('aborted');
+  });
 });
 
 describe('retryWithPolicy', () => {
@@ -349,5 +362,24 @@ describe('retryWithPolicy', () => {
     expect(onRetry).toHaveBeenCalledWith(
       expect.objectContaining({ backoffMs: 3000 }),
     );
+  });
+
+  it('backoff 대기 중 abortSignal이 abort되면 즉시 reject(aborted) — 실제 sleep 사용', async () => {
+    // 실제 sleep을 사용해 backoff 대기 중 abort가 대기를 끊는지 검증한다.
+    const controller = new AbortController();
+    const fn = vi.fn().mockRejectedValue(new Error('429 rate limit'));
+
+    // onRetry에서 abort → 이어지는 wait(backoffMs, signal)가 즉시 reject되어야 함
+    const p = retryWithPolicy(fn, {
+      maxRateLimitRetries: 5,
+      abortSignal: controller.signal,
+      onRetry: () => {
+        controller.abort();
+      },
+    });
+
+    await expect(p).rejects.toThrow('aborted');
+    // 최초 1회만 호출되고, backoff 대기 중 abort되어 재시도로 넘어가지 않음
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });

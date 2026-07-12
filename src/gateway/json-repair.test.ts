@@ -250,19 +250,39 @@ describe('repairTruncatedJson', () => {
     });
 
     it('텍스트 사이의 잘린 JSON을 추출+복구', () => {
-      // extractJson의 정규식이 {...}를 잡으려면 닫는 }가 필요
-      // 닫히지 않은 JSON은 전체 텍스트가 repair로 전달됨
       const input = 'Result: {"a": 1, "b": [true, false]}';
       const result = extractJson(input);
       const parsed = JSON.parse(result);
       expect(parsed.a).toBe(1);
       expect(parsed.b).toEqual([true, false]);
     });
+
+    it('문자열 값 안의 중괄호 + 절단 — 복구 가능한 필드를 보존한다 (탐욕 정규식 회귀 방지)', () => {
+      // 구현이 탐욕 정규식이면 문자열 내부의 `}`에서 잘라 '{}'(데이터 소실)가 된다
+      const input = '{"code": "if (x) { y }", "cut": "tr';
+      const parsed = JSON.parse(extractJson(input));
+      expect(parsed.code).toBe('if (x) { y }');
+    });
+
+    it('JSON 뒤에 중괄호를 포함한 산문이 와도 첫 균형 지점에서 추출한다', () => {
+      const input = 'Answer: {"a": 1}. Note that {} is empty.';
+      expect(JSON.parse(extractJson(input))).toEqual({ a: 1 });
+    });
   });
 });
 
 describe('tryParseAndValidate', () => {
   const TestSchema = z.object({ summary: z.string(), score: z.number() });
+
+  it('문자열 내 중괄호 절단이 optional 스키마에서 빈 객체로 통과하지 않는다 (silent data loss 회귀 방지)', () => {
+    const OptionalSchema = z.object({
+      code: z.string().optional(),
+      cut: z.string().optional(),
+    });
+    const result = tryParseAndValidate('{"code": "if (x) { y }", "cut": "tr', OptionalSchema);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.code).toBe('if (x) { y }');
+  });
 
   it('유효한 JSON + 스키마 통과 → { ok: true, data }', () => {
     const result = tryParseAndValidate('{"summary": "ok", "score": 90}', TestSchema);

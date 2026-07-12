@@ -28,7 +28,15 @@ export function isRateLimitError(error: unknown): boolean {
   );
 }
 
-/** 서버 일시 장애 감지 (rate limit과 분리 — 별도 재시도 정책 적용) */
+/**
+ * 서버 일시 장애 감지 (rate limit과 분리 — 별도 재시도 정책 적용).
+ *
+ * 프록시 계층 에러(cli-proxy-api의 502, type 'server_error')는 여기서 재시도하지
+ * 않는다 — AI SDK 기본 maxRetries=2가 isRetryable(5xx) 규칙으로 502를 이미
+ * 재시도하고, 프록시 자체도 업스트림 재시도 후 502를 반환하므로 단기 장애는
+ * 하위 계층에서 흡수된다. 'unknown provider' 같은 영구 오류도 같은 502로 오므로
+ * 상위 재시도는 무익하다.
+ */
 export function isServerOverloadError(error: unknown): boolean {
   const apiError = unwrapApiError(error);
   if (apiError?.statusCode !== undefined) {
@@ -54,9 +62,26 @@ export function parseRetryAfter(error: unknown): number {
   return match ? Math.ceil(parseFloat(match[1])) : 0;
 }
 
-/** 지정 시간(ms) 대기 */
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * 지정 시간(ms) 대기. signal이 주어지면 대기 중 abort 시 즉시 reject한다
+ * (backoff 대기가 취소를 무시해 최대 5분 지연되는 것을 방지).
+ */
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('aborted'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(new Error('aborted'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export const MAX_RATE_LIMIT_RETRIES = 5;
@@ -73,15 +98,18 @@ export interface RetryPolicyOptions {
   overloadBackoffMs?: number;
   onRetry?: (info: { error: unknown; attempt: number; backoffMs: number; type: 'rate-limit' | 'overload' }) => void | Promise<void>;
   shouldAbort?: () => boolean | Promise<boolean>;
+  /** backoff 대기 중 abort 시 즉시 중단하기 위한 signal (선택) */
+  abortSignal?: AbortSignal;
   /** @internal 테스트용 sleep 주입 */
-  _sleep?: (ms: number) => Promise<void>;
+  _sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 /**
- * Rate limit(exponential backoff)과 서버 과부하(고정 backoff)를 서로 독립된
- * 재시도 예산으로 처리한다. 두 예산 중 해당하는 쪽이 소진되면 마지막 원본
- * 에러를 그대로 다시 던진다 (일반 에러로 감싸지 않음 — 상위에서 statusCode/
- * 메시지 기반 분류가 계속 동작해야 하므로).
+ * Rate limit(선형 backoff: attempt × 3000ms, retry-after 안내가 있으면 그 값과
+ * 큰 쪽)과 서버 과부하(고정 backoff)를 서로 독립된 재시도 예산으로 처리한다.
+ * 두 예산 중 해당하는 쪽이 소진되면 마지막 원본 에러를 그대로 다시 던진다
+ * (일반 에러로 감싸지 않음 — 상위에서 statusCode/메시지 기반 분류가 계속
+ * 동작해야 하므로).
  */
 export async function retryWithPolicy<T>(
   fn: () => Promise<T>,
@@ -111,13 +139,13 @@ export async function retryWithPolicy<T>(
         rateLimitAttempts++;
         const backoffMs = Math.max(retryAfterMs, rateLimitAttempts * 3000);
         await options?.onRetry?.({ error, attempt: rateLimitAttempts, backoffMs, type: 'rate-limit' });
-        await wait(backoffMs);
+        await wait(backoffMs, options?.abortSignal);
         continue;
       }
       if (isServerOverloadError(error) && overloadAttempts < maxOverload) {
         overloadAttempts++;
         await options?.onRetry?.({ error, attempt: overloadAttempts, backoffMs: overloadBackoff, type: 'overload' });
-        await wait(overloadBackoff);
+        await wait(overloadBackoff, options?.abortSignal);
         continue;
       }
       throw error;

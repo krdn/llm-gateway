@@ -40,7 +40,9 @@ export type ModuleUsage = NormalizedUsage & { provider: string; model: string };
  *
  * - `completed`: `result`/`usage` 보장. `errorMessage`가 있으면 분석은 성공했으나
  *   `onPersist('completed')` 저장이 실패했다는 뜻이다.
- * - `failed` / `skipped`: `errorMessage`에 사유가 담긴다.
+ * - `failed` / `skipped`: `errorMessage`에 사유가 담긴다. `failed`의 `usage`는
+ *   실패 전까지 실제 소비한 토큰이 파악되는 경우에만 존재한다
+ *   (text2step 이중 실패, native 파싱 실패 등 — 비용 집계 누락 방지).
  */
 export type AnalysisModuleResult<TResult = unknown> =
   | {
@@ -50,7 +52,7 @@ export type AnalysisModuleResult<TResult = unknown> =
       usage: ModuleUsage;
       errorMessage?: string;
     }
-  | { module: string; status: 'failed'; errorMessage: string }
+  | { module: string; status: 'failed'; errorMessage: string; usage?: ModuleUsage }
   | { module: string; status: 'skipped'; errorMessage: string };
 
 /**

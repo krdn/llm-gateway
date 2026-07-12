@@ -104,36 +104,36 @@ describe('getModel', () => {
   // ── claude-cli ──
   describe('claude-cli', () => {
     it('createOpenAI + client.chat() 호출, 기본 baseUrl=http://localhost:8317/v1', async () => {
-      await getModel('claude-cli', 'claude-sonnet-4-6');
+      await getModel('claude-cli', 'claude-sonnet-4-6', undefined, 'my-key');
       expect(createOpenAI).toHaveBeenCalledWith({
         baseURL: 'http://localhost:8317/v1',
-        apiKey: 'cli-proxy',
+        apiKey: 'my-key',
       });
       const client = vi.mocked(createOpenAI).mock.results[0]?.value;
       expect(client.chat).toHaveBeenCalledWith('claude-sonnet-4-6');
     });
 
     it('커스텀 baseUrl에 /v1 suffix 자동 추가', async () => {
-      await getModel('claude-cli', 'claude-sonnet-4-6', 'http://myproxy:9000');
+      await getModel('claude-cli', 'claude-sonnet-4-6', 'http://myproxy:9000', 'my-key');
       expect(createOpenAI).toHaveBeenCalledWith({
         baseURL: 'http://myproxy:9000/v1',
-        apiKey: 'cli-proxy',
+        apiKey: 'my-key',
       });
     });
 
     it('이미 /v1으로 끝나는 baseUrl은 그대로 사용', async () => {
-      await getModel('claude-cli', 'claude-sonnet-4-6', 'http://myproxy:9000/v1');
+      await getModel('claude-cli', 'claude-sonnet-4-6', 'http://myproxy:9000/v1', 'my-key');
       expect(createOpenAI).toHaveBeenCalledWith({
         baseURL: 'http://myproxy:9000/v1',
-        apiKey: 'cli-proxy',
+        apiKey: 'my-key',
       });
     });
 
-    it('apiKey 전달 시 cli-proxy 대신 사용', async () => {
-      await getModel('claude-cli', 'claude-sonnet-4-6', undefined, 'my-key');
-      expect(createOpenAI).toHaveBeenCalledWith(
-        expect.objectContaining({ apiKey: 'my-key' }),
+    it('apiKey 미전달 시 명시적 에러 — cli-proxy-api는 api-keys를 검증하므로 기본 키가 없다', async () => {
+      await expect(getModel('claude-cli', 'claude-sonnet-4-6')).rejects.toThrow(
+        /apiKey가 필요합니다/,
       );
+      expect(createOpenAI).not.toHaveBeenCalled();
     });
   });
 

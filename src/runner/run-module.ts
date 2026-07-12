@@ -1,5 +1,10 @@
 // 분석 모듈 단일 실행 러너 — 도메인 무관
+import { NoObjectGeneratedError } from 'ai';
 import { analyzeStructured, type AIGatewayOptions } from '../gateway';
+// 배럴('../gateway')이 아닌 구체 모듈에서 import — 테스트가 배럴을 통째로
+// mock해도 instanceof 검사와 usage 정규화가 실제 구현으로 동작해야 한다
+import { StructuredOutputError } from '../gateway/strategies';
+import { normalizeUsage } from '../gateway/normalize-usage';
 import type { ModelConfigAdapter, ResolvedModelConfig } from '../adapters/model-config';
 import {
   noopPipelineControl,
@@ -55,7 +60,14 @@ export type PersistEvent =
       result: unknown;
       usage: ModuleUsage;
     }
-  | { jobId: number; module: string; status: 'failed'; errorMessage: string };
+  | {
+      jobId: number;
+      module: string;
+      status: 'failed';
+      errorMessage: string;
+      /** 실패 전까지 실제 소비한 토큰 (파악되는 경우에만 — 비용 집계 누락 방지) */
+      usage?: ModuleUsage;
+    };
 
 export interface ProgressEvent {
   module: string;
@@ -75,7 +87,8 @@ export interface ProgressEvent {
  *   5. 매 재시도 전 `pipelineControl.isCancelled` / `waitIfPaused` 체크,
  *      호출 진행 중에도 취소를 폴링해 in-flight 요청을 abort
  *   6. `analyzeStructured()` 호출 → 결과 반환 + onPersist(`completed`)
- *   7. Rate limit 에러: exponential backoff로 최대 5회 재시도
+ *   7. Rate limit 에러: 선형 backoff(attempt × 3000ms, retry-after 안내가
+ *      있으면 그 값과 큰 쪽)로 최대 5회 재시도
  *   8. Server overload(503/529): 15초 후 1회만 재시도
  *
  * 에러 처리 정책: **부분 실패 허용** — 어떤 경로에서도 throw하지 않고 항상
@@ -138,6 +151,8 @@ export async function runModule<TInput, TResult>(
 
   // 취소 폴링 타이머 — finally에서 반드시 정리
   let cancelPoll: ReturnType<typeof setInterval> | undefined;
+  // catch 블록에서 실패 usage에 provider/model 컨텍스트를 붙이기 위해 호이스팅
+  let resolvedConfig: ResolvedModelConfig | undefined;
 
   try {
     // 비용 한도 pre-flight (noop 구현은 항상 true)
@@ -151,12 +166,13 @@ export async function runModule<TInput, TResult>(
       return { module: module.name, status: 'failed', errorMessage };
     }
 
-    await onPersist({ jobId, module: module.name, status: 'running' });
+    await safePersist({ jobId, module: module.name, status: 'running' });
     safeProgress({ module: module.name, phase: 'start' });
 
     const config: ResolvedModelConfig = options.configAdapter
       ? await options.configAdapter.resolve(module.name)
       : { provider: module.provider, model: module.model };
+    resolvedConfig = config;
 
     const prompt = module.buildPrompt(input);
 
@@ -192,9 +208,16 @@ export async function runModule<TInput, TResult>(
     const result = await retryWithPolicy(
       () => analyzeStructured(prompt, module.schema, gatewayOptions),
       {
-        shouldAbort: () => gatewaySignal.aborted || pipelineControl.isCancelled(jobId),
+        abortSignal: gatewaySignal,
+        // 어댑터 일시 오류는 '취소 아님'으로 간주(fail-open) — 취소 폴링
+        // 경로(isCancelled().catch(() => undefined))와 동일 정책
+        shouldAbort: () =>
+          gatewaySignal.aborted ||
+          Promise.resolve(pipelineControl.isCancelled(jobId)).catch(() => false),
         onRetry: async ({ attempt, backoffMs, type }) => {
-          await pipelineControl.waitIfPaused(jobId);
+          // waitIfPaused 실패가 원본 429 에러를 대체해 던져지며 재시도 예산이
+          // 남았는데도 중단되는 것을 방지 (가드)
+          await Promise.resolve(pipelineControl.waitIfPaused(jobId)).catch(() => undefined);
           const msg = type === 'rate-limit'
             ? `${module.name}: Rate limit, ${Math.round(backoffMs / 1000)}초 후 재시도 (${attempt})`
             : `${module.name}: 서버 과부하, ${Math.round(backoffMs / 1000)}초 후 재시도`;
@@ -237,13 +260,37 @@ export async function runModule<TInput, TResult>(
     const raw = error instanceof Error ? error.message : String(error);
     const errorMessage = raw === 'aborted' ? '사용자에 의해 중지됨' : raw;
 
+    // 실패 경로에서도 실제 소비한 토큰을 보존 — StructuredOutputError(text2step
+    // 이중 실패)와 AI SDK NoObjectGeneratedError(native 파싱 실패)는 usage를 실어 온다
+    const failedTokens =
+      error instanceof StructuredOutputError
+        ? error.usage
+        : NoObjectGeneratedError.isInstance(error) && error.usage
+          ? normalizeUsage(error.usage)
+          : undefined;
+    const failedUsage =
+      failedTokens && resolvedConfig
+        ? { ...failedTokens, provider: resolvedConfig.provider, model: resolvedConfig.model }
+        : undefined;
+
     safeProgress({ module: module.name, phase: 'fail', message: errorMessage });
-    await safePersist({ jobId, module: module.name, status: 'failed', errorMessage });
+    await safePersist({
+      jobId,
+      module: module.name,
+      status: 'failed',
+      errorMessage,
+      ...(failedUsage ? { usage: failedUsage } : {}),
+    });
     await pipelineControl
       .appendEvent(jobId, 'error', `${module.name} 분석 실패: ${errorMessage}`)
       .catch(() => undefined);
 
-    return { module: module.name, status: 'failed', errorMessage };
+    return {
+      module: module.name,
+      status: 'failed',
+      errorMessage,
+      ...(failedUsage ? { usage: failedUsage } : {}),
+    };
   } finally {
     if (cancelPoll) clearInterval(cancelPoll);
   }

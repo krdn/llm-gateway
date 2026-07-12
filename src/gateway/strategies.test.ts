@@ -11,7 +11,7 @@ vi.mock('ai', async (importOriginal) => {
 });
 
 import type { LanguageModel } from 'ai';
-import { executeStructured } from './strategies';
+import { executeStructured, StructuredOutputError } from './strategies';
 import { generateText } from 'ai';
 
 const mockModel = { id: 'test-model' } as unknown as LanguageModel;
@@ -203,6 +203,30 @@ describe('executeStructured', () => {
       await expect(
         executeStructured('ollama', mockModel, TestSchema, baseOpts),
       ).rejects.toThrow(/구조화 출력 실패.*step1\(finishReason=stop\).*step2\(finishReason=stop\)/s);
+    });
+
+    it('이중 실패 에러는 StructuredOutputError로, 두 호출의 usage 합산을 보존한다', async () => {
+      vi.mocked(generateText).mockResolvedValueOnce({
+        text: 'never json',
+        usage: { inputTokens: 50, outputTokens: 30, totalTokens: 80 },
+        finishReason: 'stop',
+      } as unknown as Awaited<ReturnType<typeof generateText>>);
+      vi.mocked(generateText).mockResolvedValueOnce({
+        text: 'still not json',
+        usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 },
+        finishReason: 'stop',
+      } as unknown as Awaited<ReturnType<typeof generateText>>);
+
+      const err = await executeStructured('ollama', mockModel, TestSchema, baseOpts).catch(
+        (e: unknown) => e,
+      );
+
+      expect(err).toBeInstanceOf(StructuredOutputError);
+      expect((err as StructuredOutputError).usage).toEqual({
+        inputTokens: 70,
+        outputTokens: 40,
+        totalTokens: 110,
+      });
     });
   });
 });

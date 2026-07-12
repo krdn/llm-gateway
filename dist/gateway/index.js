@@ -25,7 +25,6 @@ var PROVIDER_REGISTRY = {
     accessMethod: "direct-api",
     requiresApiKey: true,
     requiresBaseUrl: false,
-    defaultBaseUrl: "https://api.openai.com/v1",
     supportsStructuredOutput: true,
     callMethod: "direct",
     color: "bg-green-500"
@@ -78,18 +77,21 @@ var PROVIDER_REGISTRY = {
     type: "claude-cli",
     displayName: "Claude CLI (Proxy)",
     accessMethod: "proxy-cli",
-    requiresApiKey: false,
+    // cli-proxy-api는 config.yaml의 api-keys로 Bearer 토큰을 항상 검증한다.
+    // 프록시 config에 등록된 키를 options.apiKey로 전달해야 한다 (미전달 시 명시 에러).
+    requiresApiKey: true,
     requiresBaseUrl: true,
     defaultBaseUrl: "http://localhost:8317",
     supportsStructuredOutput: false,
     callMethod: "chat",
-    defaultApiKey: "cli-proxy",
     color: "bg-amber-500"
   },
+  // ai-sdk-provider-gemini-cli 경유 — 로컬 ~/.gemini OAuth를 직접 사용한다.
+  // baseUrl/apiKey는 무시되며 cli-proxy-api와 무관한 별도 크레덴셜/쿼터 경로.
   "gemini-cli": {
     type: "gemini-cli",
-    displayName: "Gemini CLI (Proxy)",
-    accessMethod: "proxy-cli",
+    displayName: "Gemini CLI (Local OAuth)",
+    accessMethod: "local",
     requiresApiKey: false,
     requiresBaseUrl: false,
     supportsStructuredOutput: false,
@@ -214,8 +216,7 @@ function extractJson(text) {
   if (codeBlockMatch) {
     json = codeBlockMatch[1].trim();
   } else {
-    const jsonMatch = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-    json = jsonMatch ? jsonMatch[1].trim() : text.trim();
+    json = extractBalancedSlice(text);
   }
   try {
     JSON.parse(json);
@@ -223,6 +224,36 @@ function extractJson(text) {
   } catch {
     return repairTruncatedJson(json);
   }
+}
+function extractBalancedSlice(text) {
+  const start = text.search(/[{[]/);
+  if (start === -1) return text.trim();
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (inString) {
+      if (ch === "\\") escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      depth++;
+    } else if (ch === "}" || ch === "]") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return text.slice(start);
 }
 function scanJson(text) {
   const openStack = [];
@@ -342,15 +373,29 @@ function tryParseAndValidate(text, schema) {
 
 // src/gateway/strategies.ts
 var CONVERTER_INPUT_MAX_CHARS = 32e3;
+var StructuredOutputError = class extends Error {
+  usage;
+  constructor(message, usage) {
+    super(message);
+    this.name = "StructuredOutputError";
+    this.usage = usage;
+  }
+};
 async function executeStructured(provider, model, schema, opts) {
-  return needsTextFallback(provider) ? executeText2Step(model, schema, opts) : executeNative(model, schema, opts);
+  return needsTextFallback(provider) ? executeText2Step(model, schema, opts) : executeNative(provider, model, schema, opts);
 }
-async function executeNative(model, schema, opts) {
+async function executeNative(provider, model, schema, opts) {
   const result = await generateText({
     model,
     ...opts.systemPrompt ? { system: opts.systemPrompt } : {},
     prompt: opts.prompt,
     output: Output.object({ schema }),
+    // Anthropic은 classic tool_use(jsonTool)로 강제한다. 기본 'auto'는 신형
+    // output_config.format을 선택하는데, 이 경로는 JSON Schema 부분집합만 허용해
+    // number의 minimum/maximum, array의 minItems(>1) 등을 거부한다.
+    // classic tool_use는 표준 JSON Schema를 그대로 받으므로 스키마 제약이 보존되고,
+    // cli-proxy-api(Claude Max 플랜) 경유 시에도 구조화 출력이 정상 동작한다. (v3.4.0)
+    ...provider === "anthropic" ? { providerOptions: { anthropic: { structuredOutputMode: "jsonTool" } } } : {},
     maxOutputTokens: opts.maxOutputTokens,
     abortSignal: opts.abortSignal
   });
@@ -427,9 +472,10 @@ Output the JSON object now:`;
     };
   }
   const step1Hint = step1.finishReason === "length" ? ", \uD1A0\uD070 \uC81C\uD55C \uC808\uB2E8" : "";
-  throw new Error(
+  throw new StructuredOutputError(
     `[llm-gateway] \uAD6C\uC870\uD654 \uCD9C\uB825 \uC2E4\uD328 \u2014 step1(finishReason=${step1.finishReason}${step1Hint}): ${step1Result.reason} / step2(finishReason=${step2.finishReason}): ${step2Result.reason}
-step2 \uC751\uB2F5 (\uCC98\uC74C 500\uC790): ${step2.text.slice(0, 500)}`
+step2 \uC751\uB2F5 (\uCC98\uC74C 500\uC790): ${step2.text.slice(0, 500)}`,
+    sumUsage(step1.usage, step2.usage)
   );
 }
 function sumUsage(u1, u2) {
@@ -444,7 +490,8 @@ function sumUsage(u1, u2) {
 
 // src/gateway/gateway.ts
 function mergeAbortSignals(external, timeoutMs) {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs ?? 3e5);
+  const ms = timeoutMs != null && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 3e5;
+  const timeoutSignal = AbortSignal.timeout(ms);
   return external ? AbortSignal.any([external, timeoutSignal]) : timeoutSignal;
 }
 async function analyzeText(prompt, options = {}) {
@@ -473,6 +520,6 @@ async function analyzeStructured(prompt, schema, options = {}) {
   });
 }
 
-export { AI_PROVIDER_VALUES, PROVIDER_REGISTRY, analyzeStructured, analyzeText, getProvidersByAccess, isProxyCli, needsTextFallback, normalizeUsage };
+export { AI_PROVIDER_VALUES, PROVIDER_REGISTRY, StructuredOutputError, analyzeStructured, analyzeText, getProvidersByAccess, isProxyCli, needsTextFallback, normalizeUsage };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

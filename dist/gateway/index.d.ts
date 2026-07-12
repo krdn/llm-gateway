@@ -2,13 +2,24 @@ import { FinishReason, LanguageModelUsage } from 'ai';
 import { N as NormalizedUsage } from '../normalize-usage-DYEF9hAT.js';
 export { n as normalizeUsage } from '../normalize-usage-DYEF9hAT.js';
 import { z } from 'zod';
-import { A as AIProvider } from '../provider-meta-DzMZPC6j.js';
-export { a as AI_PROVIDER_VALUES, b as AccessMethod, C as CallMethod, P as PROVIDER_REGISTRY, c as ProviderMeta, g as getProvidersByAccess, i as isProxyCli, n as needsTextFallback } from '../provider-meta-DzMZPC6j.js';
+import { A as AIProvider } from '../provider-meta-BkGweTb-.js';
+export { a as AI_PROVIDER_VALUES, b as AccessMethod, C as CallMethod, P as PROVIDER_REGISTRY, c as ProviderMeta, g as getProvidersByAccess, i as isProxyCli, n as needsTextFallback } from '../provider-meta-BkGweTb-.js';
 
 interface StrategyResult<T> {
     object: T;
     usage: NormalizedUsage;
     finishReason: FinishReason;
+}
+/**
+ * text2step 이중 실패 시 던지는 에러.
+ *
+ * 두 호출 모두 HTTP 레벨로는 성공해 토큰이 실제 과금된 상태이므로, 소비한
+ * usage를 에러에 실어 실패한 분석도 비용 집계(checkCostLimit/onPersist)에
+ * 포함될 수 있게 한다. runModule이 이를 감지해 failed 결과에 usage를 싣는다.
+ */
+declare class StructuredOutputError extends Error {
+    readonly usage: NormalizedUsage;
+    constructor(message: string, usage: NormalizedUsage);
 }
 
 interface AIGatewayOptions {
@@ -18,7 +29,11 @@ interface AIGatewayOptions {
     systemPrompt?: string;
     baseUrl?: string;
     apiKey?: string;
-    /** API 호출 타임아웃 (ms). 기본값 300,000 (5분) */
+    /**
+     * API 호출 타임아웃 (ms). 기본값 300,000 (5분).
+     * 0·음수·비유한값(Infinity/NaN)은 기본값으로 대체된다 — 타임아웃 비활성화는
+     * 지원하지 않는다 (runner/config 경로의 falsy 필터와 동일한 의미론).
+     */
     timeoutMs?: number;
     /** 외부에서 전달하는 AbortSignal (타임아웃과 병합됨) */
     abortSignal?: AbortSignal;
@@ -58,4 +73,4 @@ declare function analyzeText(prompt: string, options?: AIGatewayOptions): Promis
  */
 declare function analyzeStructured<T>(prompt: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>, options?: AIGatewayOptions): Promise<StrategyResult<T>>;
 
-export { type AIGatewayOptions, AIProvider, type AnalyzeTextResult, NormalizedUsage, analyzeStructured, analyzeText };
+export { type AIGatewayOptions, AIProvider, type AnalyzeTextResult, NormalizedUsage, StructuredOutputError, analyzeStructured, analyzeText };

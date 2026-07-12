@@ -1,4 +1,4 @@
-import { A as AIProvider } from '../provider-meta-DzMZPC6j.js';
+import { A as AIProvider } from '../provider-meta-BkGweTb-.js';
 
 /**
  * 모듈 실행 시 사용할 모델/프로바이더/엔드포인트 정보.
@@ -28,7 +28,12 @@ interface InMemoryModelConfigOptions {
     }>;
     /** 모듈별 부분 오버라이드 */
     overrides?: Partial<Record<string, Partial<ResolvedModelConfig>>>;
-    /** 프로바이더별 공통 apiKey/baseUrl */
+    /**
+     * 프로바이더별 공통 apiKey/baseUrl/model.
+     * `model`은 override로 provider를 전환해 base.model이 새 프로바이더에서
+     * 무효해진 경우에만 구제용으로 적용된다 — provider를 바꾸지 않은 평상시엔
+     * base.model이 유지되고 providerDefaults.model은 무시된다.
+     */
     providerDefaults?: Partial<Record<AIProvider, {
         apiKey?: string;
         baseUrl?: string;

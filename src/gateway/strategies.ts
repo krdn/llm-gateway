@@ -27,6 +27,23 @@ export interface StrategyResult<T> {
 const CONVERTER_INPUT_MAX_CHARS = 32_000;
 
 /**
+ * text2step 이중 실패 시 던지는 에러.
+ *
+ * 두 호출 모두 HTTP 레벨로는 성공해 토큰이 실제 과금된 상태이므로, 소비한
+ * usage를 에러에 실어 실패한 분석도 비용 집계(checkCostLimit/onPersist)에
+ * 포함될 수 있게 한다. runModule이 이를 감지해 failed 결과에 usage를 싣는다.
+ */
+export class StructuredOutputError extends Error {
+  readonly usage: NormalizedUsage;
+
+  constructor(message: string, usage: NormalizedUsage) {
+    super(message);
+    this.name = 'StructuredOutputError';
+    this.usage = usage;
+  }
+}
+
+/**
  * provider capability에 따라 구조화 출력을 실행한다.
  *
  * - 네이티브 지원 → `generateText` + `Output.object` (AI SDK v6가 provider별
@@ -172,11 +189,12 @@ Output the JSON object now:`;
   }
 
   const step1Hint = step1.finishReason === 'length' ? ', 토큰 제한 절단' : '';
-  throw new Error(
+  throw new StructuredOutputError(
     `[llm-gateway] 구조화 출력 실패 — ` +
       `step1(finishReason=${step1.finishReason}${step1Hint}): ${step1Result.reason} / ` +
       `step2(finishReason=${step2.finishReason}): ${step2Result.reason}\n` +
       `step2 응답 (처음 500자): ${step2.text.slice(0, 500)}`,
+    sumUsage(step1.usage, step2.usage),
   );
 }
 

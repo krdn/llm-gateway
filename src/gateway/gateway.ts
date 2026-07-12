@@ -17,7 +17,11 @@ export interface AIGatewayOptions {
   systemPrompt?: string;
   baseUrl?: string;
   apiKey?: string;
-  /** API 호출 타임아웃 (ms). 기본값 300,000 (5분) */
+  /**
+   * API 호출 타임아웃 (ms). 기본값 300,000 (5분).
+   * 0·음수·비유한값(Infinity/NaN)은 기본값으로 대체된다 — 타임아웃 비활성화는
+   * 지원하지 않는다 (runner/config 경로의 falsy 필터와 동일한 의미론).
+   */
   timeoutMs?: number;
   /** 외부에서 전달하는 AbortSignal (타임아웃과 병합됨) */
   abortSignal?: AbortSignal;
@@ -29,7 +33,12 @@ export interface AIGatewayOptions {
  * Node가 unref하므로 이벤트 루프를 붙잡지 않는다.
  */
 function mergeAbortSignals(external?: AbortSignal, timeoutMs?: number): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs ?? 300_000);
+  // 0(즉시 abort)·음수/Infinity(AbortSignal.timeout이 RangeError) 방어 —
+  // 유효하지 않은 값은 기본 5분으로 대체해 직접 호출 경로와
+  // runner/config 경로(falsy → 기본값)의 의미를 일치시킨다.
+  const ms =
+    timeoutMs != null && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 300_000;
+  const timeoutSignal = AbortSignal.timeout(ms);
   return external ? AbortSignal.any([external, timeoutSignal]) : timeoutSignal;
 }
 
