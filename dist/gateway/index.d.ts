@@ -20,7 +20,9 @@ interface StrategyResult<T> {
  */
 declare class StructuredOutputError extends Error {
     readonly usage: NormalizedUsage;
-    constructor(message: string, usage: NormalizedUsage);
+    constructor(message: string, usage: NormalizedUsage, options?: {
+        cause?: unknown;
+    });
 }
 
 interface AIGatewayOptions {

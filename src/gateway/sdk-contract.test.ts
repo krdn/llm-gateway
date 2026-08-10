@@ -9,7 +9,17 @@
 // 여기서는 mock 경계를 **provider 구현**까지 내린다. `@ai-sdk/*` 팩토리만
 // MockLanguageModelV4를 반환하도록 바꾸고, 그 위의 `ai` core는 실제로 돌린다.
 // 커버리지를 다시 얻자는 게 아니라, SDK 업그레이드가 깨뜨릴 지점만 고정하는
-// 카나리다. 여기가 빨개지면 SDK의 계약이 움직인 것이다.
+// 카나리다.
+//
+// **이 계층이 실제로 보장하는 범위**(과대 해석 금지):
+//   보장한다 — `ai` core가 Output.object를 responseFormat으로 바꾸는 방식,
+//     provider usage(중첩)를 평면 형태로 정규화하는 방식, output resolve 조건,
+//     실패 시 올라오는 에러 종류, 그리고 우리 코드가 그것들에 거는 기대.
+//   보장하지 않는다 — `@ai-sdk/anthropic|openai|google`의 실제 변환(providerOptions
+//     → HTTP 바디, 헤더, 프로바이더별 usage 원본 형태), 네트워크 동작, 그리고
+//     `ai/test`의 Mock 클래스 자체가 메이저에서 바뀌는 경우. 즉 core는 멀쩡한데
+//     provider 패키지만 깨지는 시나리오는 여기서 잡히지 않는다 — SDK 메이저를
+//     올릴 때는 소비자 타입 검증과 실 프로바이더 스모크를 별도로 봐야 한다.
 //
 // mock 스펙 버전은 **실제 프로바이더가 쓰는 것과 맞춰야 한다**. `ai/test`는 V3와
 // V4를 모두 export하고 core가 둘 다 받으므로 V3로도 테스트는 통과하지만, 그러면
@@ -29,7 +39,8 @@ function providerUsage(input: number, output: number) {
   };
 }
 
-type Turn = { text: string; finish?: 'stop' | 'length'; input?: number; output?: number };
+type FinishUnified = 'stop' | 'length' | 'tool-calls' | 'content-filter' | 'error' | 'other';
+type Turn = { text: string; finish?: FinishUnified; input?: number; output?: number };
 
 const hoisted = vi.hoisted(() => ({
   /** 현재 테스트가 쓰는 모델. 팩토리 mock이 호출 시점에 읽는다. */
@@ -141,6 +152,36 @@ describe('SDK 계약 — native 구조화 출력', () => {
       analyzeStructured('분석해줘', TestSchema, { provider: 'anthropic' }),
     ).rejects.toThrow(/length/);
   });
+
+  it('원본 SDK 에러를 cause로 보존한다', async () => {
+    installModel({ text: '{"partial', finish: 'length' });
+
+    // 좁은 try/catch가 NoOutputGeneratedError 외의 것을 삼켜도 원인을 잃지 않아야
+    // 한다. cause가 다른 종류로 바뀌면 그것 자체가 SDK 계약 변화의 신호다.
+    await expect(
+      analyzeStructured('분석해줘', TestSchema, { provider: 'anthropic' }),
+    ).rejects.toMatchObject({ cause: { name: 'AI_NoOutputGeneratedError' } });
+  });
+
+  // `finishReason !== 'stop'`을 미리 검사하는 대신 output 접근만 try로 감싼 선택의
+  // 전제 — "완결되지 않은 출력이면 반드시 throw한다" — 를 여기서 고정한다.
+  // 특히 tool-calls: anthropic은 native 경로에서 classic tool_use(jsonTool)를 쓰므로
+  // 그 모드가 tool-calls를 낸다면 넓은 가드는 성공 경로를 막았을 것이다. 실제로는
+  // tool-calls에서도 output이 resolve되지 않으므로, 그 모드는 stop을 낸다는 뜻이고
+  // 두 방식의 동작은 같다. 이 목록이 깨지면 방어 방식을 다시 검토해야 한다.
+  it.each(['tool-calls', 'content-filter', 'error', 'other'] as const)(
+    "finishReason='%s'도 완결되지 않은 출력으로 다뤄진다",
+    async (finish) => {
+      installModel({ text: '{"summary":"ok","score":1}', finish, input: 7, output: 3 });
+
+      await expect(
+        analyzeStructured('분석해줘', TestSchema, { provider: 'anthropic' }),
+      ).rejects.toMatchObject({
+        name: 'StructuredOutputError',
+        usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 },
+      });
+    },
+  );
 
   it('스키마 위반 응답은 SDK의 NoObjectGeneratedError로 올라온다', async () => {
     installModel({ text: '{"summary":"ok","score":"문자열이라 위반"}' });

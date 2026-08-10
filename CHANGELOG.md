@@ -23,6 +23,18 @@
   (`@ai-sdk/provider-utils` v5 경유). WebSocket 관련 high 3건을 포함해 열려 있던
   runtime scope alert이 전부 패치 범위(`< 6.28.0`) 위로 이동한다.
 
+- **에러 계약 정정 (4.1.2에서 이미 바뀐 동작을 여기서 명시한다).** native 경로에서
+  프로바이더가 완결된 출력을 내지 않으면(토큰 절단 등) 이전에는 AI SDK의
+  `NoOutputGeneratedError`가 그대로 올라왔다. 4.1.2부터는 usage를 실은
+  `StructuredOutputError`가 대신 올라온다. **에러 타입으로 분기하던 소비자에게는
+  동작 변화이므로 patch가 아니라 여기서 공개 계약 변경으로 밝힌다** — 알려진 소비자
+  2곳은 이 에러들로 분기하지 않아 실제 영향이 없었지만, 공개 라이브러리로서 patch에
+  담을 변경이 아니었다.
+  - 비용 보존 실패를 잡으려면 `instanceof StructuredOutputError`(또는 `usage` 필드
+    존재)로 분기할 것. 원본 SDK 에러는 `cause`에 보존되므로
+    `err.cause?.name === 'AI_NoOutputGeneratedError'`로 기존 분기를 유지할 수도 있다.
+  - 스키마 위반은 종전대로 AI SDK의 `NoObjectGeneratedError`다 (바뀌지 않았다).
+
 두 항목을 하나의 major로 묶은 이유: 각각 따로 내면 소비자가 연속으로 두 번 major를
 겪는데, Node 하한은 어차피 v7이 강제하므로 분리할 실익이 없다.
 
