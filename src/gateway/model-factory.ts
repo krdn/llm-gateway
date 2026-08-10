@@ -8,7 +8,7 @@ import {
   type AIProvider,
 } from './provider-meta';
 
-export const DEFAULT_MODELS: Partial<Record<AIProvider, string>> = {
+const DEFAULT_MODELS: Partial<Record<AIProvider, string>> = {
   anthropic: 'claude-sonnet-4-6',
   openai: 'gpt-4.1-nano',
   gemini: 'gemini-2.5-flash',
