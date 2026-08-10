@@ -35,8 +35,9 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # lockfile 갱신 없이 이 잡에서만 zod를 4.x로 교체한다 (--no-frozen-lockfile 필요)
-      - run: pnpm add -D zod@^4.1.8 --no-frozen-lockfile
+      # 이 잡에서만 zod를 4.x로 교체한다. `pnpm add`는 lockfile을 갱신하지만
+      # 러너 한정이라 저장소에 반영되지 않는다 (--frozen-lockfile은 install 전용 옵션).
+      - run: pnpm add -D zod@^4.1.8
       - run: node -e "console.log('zod', require('zod/package.json').version)"
       - run: pnpm typecheck
       - run: pnpm test
