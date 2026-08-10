@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    # dist-freshness 잡이 태그에서만 돌기 위해 필요하다 (아래 주석 참조)
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -60,3 +62,38 @@ jobs:
           '
       - run: pnpm typecheck
       - run: pnpm test
+
+  # 커밋된 dist가 소스와 어긋나지 않았는지 태그 시점에 확인한다.
+  #
+  # 이 저장소는 dist를 릴리스마다 커밋한다 (.gitignore 주석: "Git URL 설치 패턴").
+  # 실제로 소비자 하나가 `github:krdn/llm-gateway#vX.Y.Z`로 설치하므로, 그 소비자가
+  # 받는 코드는 **태그에 커밋된 dist 그 자체**다. npm 경로는 prepack이 빌드해 항상
+  # 최신이지만 이 경로엔 방어가 없어, 릴리스 때 빌드를 잊으면 조용히 낡는다 —
+  # 4.1.0~4.1.1 구간에서 실제로 그랬다(수정이 dist에 반영되지 않은 채 태그됨).
+  #
+  # main push마다 강제하지 않고 태그에서만 도는 이유: 매 커밋 검증은 "릴리스 시
+  # 커밋"이라는 기존 관례를 "항상 커밋"으로 바꿔버린다. 여기서 막고 싶은 것은
+  # 릴리스 산출물의 불일치 하나다.
+  #
+  # 재빌드-후-diff가 성립하는 전제(실측): tsup 출력이 결정적이고, sourcemap의
+  # sources가 상대경로(`../../src/...`)라 러너와 로컬이 바이트 동일하게 나온다.
+  dist-freshness:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: 커밋된 dist가 소스와 동기인지 확인
+        run: |
+          if ! git diff --quiet -- dist; then
+            echo "::error::커밋된 dist가 현재 소스와 다르다 — 태그 전에 'pnpm build' 후 dist를 커밋할 것. Git URL로 설치하는 소비자가 낡은 코드를 받는다."
+            git diff --stat -- dist
+            exit 1
+          fi
+          echo "dist가 소스와 동기 상태다."

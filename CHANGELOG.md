@@ -1,5 +1,26 @@
 # Changelog
 
+## 4.1.2 (2026-08-11)
+
+- **native 경로에서 응답이 절단되면 과금된 usage가 집계에서 사라지던 것을 고쳤다.**
+  AI SDK는 `finishReason`이 `'stop'`일 때만 구조화 출력을 resolve한다. 토큰 제한
+  등으로 그렇지 않으면 `result.output` 접근이 `NoOutputGeneratedError`를 던지는데,
+  그 에러는 usage를 싣지 않는다. `runModule`의 실패-usage 보존은
+  `StructuredOutputError`·`NoObjectGeneratedError`만 인식하므로, 이미 과금된 토큰이
+  집계에서 통째로 빠지고 소비자는 "No output generated."만 받았다. 이제 폴백 경로와
+  동일하게 `StructuredOutputError`에 usage와 `finishReason`을 실어 던진다.
+  `maxOutputTokens` 기본값이 4096이라 절단은 드문 일이 아니다.
+- **`dist/`를 소스와 동기화했다.** 이 저장소는 dist를 릴리스마다 커밋해 Git URL
+  설치(`github:krdn/llm-gateway#vX.Y.Z`)를 지원하는데, 4.1.0 이후 그 갱신이 밀려
+  **v4.1.1 태그가 4.1.0 시점의 dist를 담고 있었다.** npm 경로는 `prepack`이 빌드하므로
+  영향이 없고, Git URL로 `#v4.1.1`을 가리키던 소비자만 4.1.1의 수정을 받지 못했다.
+  이 릴리스부터 태그 시점에 CI가 dist 신선도를 검사해 재발을 막는다.
+- (내부) AI SDK 계약 테스트 계층(`sdk-contract.test.ts`)을 추가했다. 기존 스위트는
+  `generateText`를 통째로 mock해 SDK가 실제로 무엇을 하는지 — 스키마의
+  `responseFormat` 변환, provider usage의 중첩→평면 정규화, output resolve 조건,
+  에러 종류 — 를 검증하지 못했다. 이 계층은 provider 경계까지만 mock하고 SDK를
+  실제로 돌린다. 위 결함도 이 계층이 드러냈다.
+
 ## 4.1.1 (2026-08-11)
 
 - **폴백 경로에서 커스텀 `validate`가 `error` 없이 실패하면 `TypeError`로 샜다.**

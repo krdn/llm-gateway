@@ -1,6 +1,6 @@
 {
   "name": "@krdn/llm-gateway",
-  "version": "4.1.1",
+  "version": "4.1.2",
   "description": "Multi-provider LLM gateway — unified interface for Anthropic, OpenAI, Gemini, DeepSeek, Ollama, and more. Structured output with JSON repair, retry with backoff, token normalization.",
   "type": "module",
   "license": "MIT",

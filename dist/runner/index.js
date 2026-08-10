@@ -369,7 +369,7 @@ async function tryParseAndValidate(text, schema) {
   }
   const validated = await validate(parsed);
   if (!validated.success) {
-    const reason = summarizeIssues(validated.error) ?? validated.error.message;
+    const reason = summarizeIssues(validated.error) ?? validated.error?.message ?? "\uC0AC\uC720 \uC5C6\uC74C";
     return { ok: false, reason: `Zod \uAC80\uC99D \uC2E4\uD328: ${reason}` };
   }
   return { ok: true, data: validated.value };
@@ -408,8 +408,18 @@ async function executeNative(provider, model, schema, opts) {
     maxOutputTokens: opts.maxOutputTokens,
     abortSignal: opts.abortSignal
   });
+  let object;
+  try {
+    object = result.output;
+  } catch {
+    const hint = result.finishReason === "length" ? " \u2014 \uD1A0\uD070 \uC81C\uD55C \uC808\uB2E8, maxOutputTokens\uB97C \uB298\uB9B4 \uAC83" : "";
+    throw new StructuredOutputError(
+      `[llm-gateway] \uAD6C\uC870\uD654 \uCD9C\uB825 \uC2E4\uD328 \u2014 \uD504\uB85C\uBC14\uC774\uB354\uAC00 \uC644\uACB0\uB41C \uCD9C\uB825\uC744 \uB0B4\uC9C0 \uC54A\uC558\uB2E4 (finishReason=${result.finishReason})${hint}`,
+      normalizeUsage(result.usage)
+    );
+  }
   return {
-    object: result.output,
+    object,
     usage: normalizeUsage(result.usage),
     finishReason: result.finishReason
   };
