@@ -33,11 +33,13 @@ export interface StrategyResult<T> {
 const CONVERTER_INPUT_MAX_CHARS = 32_000;
 
 /**
- * text2step 이중 실패 시 던지는 에러.
+ * 구조화 출력이 실패했지만 토큰은 이미 과금된 경우에 던지는 에러.
  *
- * 두 호출 모두 HTTP 레벨로는 성공해 토큰이 실제 과금된 상태이므로, 소비한
- * usage를 에러에 실어 실패한 분석도 비용 집계(checkCostLimit/onPersist)에
- * 포함될 수 있게 한다. runModule이 이를 감지해 failed 결과에 usage를 싣는다.
+ * 두 경로에서 나온다 — text2step 이중 실패, 그리고 native 경로에서 프로바이더가
+ * 완결된 출력을 내지 않은 경우(토큰 절단 등). 어느 쪽이든 호출은 HTTP 레벨로
+ * 성공해 토큰이 실제 과금된 상태이므로, 소비한 usage를 에러에 실어 실패한
+ * 분석도 비용 집계(checkCostLimit/onPersist)에 포함될 수 있게 한다.
+ * runModule이 이를 감지해 failed 결과에 usage를 싣는다.
  */
 export class StructuredOutputError extends Error {
   readonly usage: NormalizedUsage;
@@ -108,8 +110,30 @@ async function executeNative<T>(
     maxOutputTokens: opts.maxOutputTokens,
     abortSignal: opts.abortSignal,
   });
+
+  // SDK는 finishReason이 'stop'일 때만 output을 resolve한다. 절단(length) 등으로
+  // 그렇지 않으면 `result.output` 접근이 NoOutputGeneratedError를 던지는데, 그
+  // 에러는 usage를 싣지 않아 **이미 과금된 토큰이 집계에서 사라진다**
+  // (runModule의 실패-usage 보존은 StructuredOutputError·NoObjectGeneratedError만
+  // 인식한다). 폴백 경로가 이중 실패를 StructuredOutputError로 감싸는 것과 같은
+  // 이유로, native 경로도 사유와 usage를 실어 던진다.
+  let object: T;
+  try {
+    object = result.output;
+  } catch {
+    const hint =
+      result.finishReason === 'length'
+        ? ' — 토큰 제한 절단, maxOutputTokens를 늘릴 것'
+        : '';
+    throw new StructuredOutputError(
+      `[llm-gateway] 구조화 출력 실패 — 프로바이더가 완결된 출력을 내지 않았다 ` +
+        `(finishReason=${result.finishReason})${hint}`,
+      normalizeUsage(result.usage),
+    );
+  }
+
   return {
-    object: result.output,
+    object,
     usage: normalizeUsage(result.usage),
     finishReason: result.finishReason,
   };
