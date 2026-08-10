@@ -20,6 +20,13 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
+    ignore:
+      # zod는 peerDependency(^3.24.0)와 devDependency에 동시 선언돼 있어, dev 쪽만
+      # 올리려 해도 peer 범위가 함께 바뀐다. peer 상승은 소비자에게 zod 업그레이드를
+      # 강제하는 계약 변경이고, v4는 소스 수정까지 요구한다(ZodTypeDef 제거 — PR #6
+      # typecheck 실패로 실증). 메이저는 사람이 릴리스 계획과 함께 결정한다.
+      - dependency-name: zod
+        update-types: ['version-update:semver-major']
     groups:
       ai-sdk:
         patterns:
