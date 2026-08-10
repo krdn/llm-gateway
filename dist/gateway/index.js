@@ -1,4 +1,4 @@
-import { generateText, Output } from 'ai';
+import { generateText, asSchema, Output } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -208,8 +208,6 @@ function normalizeUsage(usage) {
   const totalTokens = typeof u.totalTokens === "number" ? u.totalTokens : inputTokens + outputTokens;
   return { inputTokens, outputTokens, totalTokens };
 }
-
-// src/gateway/json-repair.ts
 function extractJson(text) {
   let json;
   const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
@@ -349,7 +347,15 @@ function stripIncompleteTail(input) {
     return s;
   }
 }
-function tryParseAndValidate(text, schema) {
+function summarizeIssues(error) {
+  const issues = error?.issues;
+  if (!Array.isArray(issues) || issues.length === 0) return void 0;
+  return issues.map((i) => {
+    const { path, message } = i;
+    return `${(path ?? []).map(String).join(".")}: ${message ?? "\uAC80\uC99D \uC2E4\uD328"}`;
+  }).join(", ");
+}
+async function tryParseAndValidate(text, schema) {
   if (!text || text.trim().length === 0) {
     return { ok: false, reason: "\uBE48 \uC751\uB2F5" };
   }
@@ -363,12 +369,16 @@ function tryParseAndValidate(text, schema) {
       reason: `JSON.parse \uC2E4\uD328: ${err instanceof Error ? err.message : String(err)}`
     };
   }
-  const validated = schema.safeParse(parsed);
-  if (!validated.success) {
-    const issues = validated.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ");
-    return { ok: false, reason: `Zod \uAC80\uC99D \uC2E4\uD328: ${issues}` };
+  const validate = asSchema(schema).validate;
+  if (!validate) {
+    return { ok: false, reason: "\uC2A4\uD0A4\uB9C8\uC5D0 validate\uAC00 \uC5C6\uC5B4 \uAC80\uC99D\uD560 \uC218 \uC5C6\uC74C" };
   }
-  return { ok: true, data: validated.data };
+  const validated = await validate(parsed);
+  if (!validated.success) {
+    const reason = summarizeIssues(validated.error) ?? validated.error.message;
+    return { ok: false, reason: `Zod \uAC80\uC99D \uC2E4\uD328: ${reason}` };
+  }
+  return { ok: true, data: validated.value };
 }
 
 // src/gateway/strategies.ts
@@ -382,6 +392,11 @@ var StructuredOutputError = class extends Error {
   }
 };
 async function executeStructured(provider, model, schema, opts) {
+  if (!asSchema(schema).validate) {
+    throw new Error(
+      "[llm-gateway] \uC2A4\uD0A4\uB9C8\uC5D0 validate\uAC00 \uC5C6\uC5B4 \uC751\uB2F5\uC744 \uAC80\uC99D\uD560 \uC218 \uC5C6\uB2E4 \u2014 zod \uC2A4\uD0A4\uB9C8\uB97C \uB118\uAE30\uAC70\uB098 `jsonSchema(schema, { validate })`\uB85C \uAC80\uC99D\uAE30\uB97C \uC9C0\uC815\uD560 \uAC83."
+    );
+  }
   return needsTextFallback(provider) ? executeText2Step(model, schema, opts) : executeNative(provider, model, schema, opts);
 }
 async function executeNative(provider, model, schema, opts) {
@@ -406,22 +421,17 @@ async function executeNative(provider, model, schema, opts) {
   };
 }
 async function executeText2Step(model, schema, opts) {
-  let schemaBlock = "";
-  try {
-    const jsonSchema = zodToJsonSchema(schema, { target: "openApi3" });
-    schemaBlock = JSON.stringify(jsonSchema, null, 2);
-  } catch {
-  }
+  const schemaBlock = await buildSchemaBlock(schema);
   const systemWithJsonHint = (opts.systemPrompt ?? "") + `
 
 IMPORTANT: Respond in valid JSON format only. Start with { and end with }.`;
   const promptWithSchema = `${opts.prompt}
 
 ---
-Respond as a JSON object matching this schema:
+` + (schemaBlock ? `Respond as a JSON object matching this schema:
 ${schemaBlock}
 
-Output JSON only. Start with {.`;
+` : "") + `Output JSON only. Start with {.`;
   const step1 = await generateText({
     model,
     system: systemWithJsonHint,
@@ -429,7 +439,7 @@ Output JSON only. Start with {.`;
     maxOutputTokens: opts.maxOutputTokens,
     abortSignal: opts.abortSignal
   });
-  const step1Result = tryParseAndValidate(step1.text, schema);
+  const step1Result = await tryParseAndValidate(step1.text, schema);
   if (step1Result.ok) {
     return {
       object: step1Result.data,
@@ -452,10 +462,10 @@ Rules:
 ${analysisText}
 """
 
-Target JSON schema:
+` + (schemaBlock ? `Target JSON schema:
 ${schemaBlock}
 
-Output the JSON object now:`;
+` : "") + `Output the JSON object now:`;
   const step2 = await generateText({
     model,
     system: converterSystem,
@@ -463,7 +473,7 @@ Output the JSON object now:`;
     maxOutputTokens: opts.maxOutputTokens,
     abortSignal: opts.abortSignal
   });
-  const step2Result = tryParseAndValidate(step2.text, schema);
+  const step2Result = await tryParseAndValidate(step2.text, schema);
   if (step2Result.ok) {
     return {
       object: step2Result.data,
@@ -472,11 +482,31 @@ Output the JSON object now:`;
     };
   }
   const step1Hint = step1.finishReason === "length" ? ", \uD1A0\uD070 \uC81C\uD55C \uC808\uB2E8" : "";
+  const schemaHint = schemaBlock ? "" : " (\uC2A4\uD0A4\uB9C8 \uD78C\uD2B8 \uC5C6\uC774 \uC2E4\uD589\uB428 \u2014 JSON Schema \uBCC0\uD658 \uC2E4\uD328)";
   throw new StructuredOutputError(
-    `[llm-gateway] \uAD6C\uC870\uD654 \uCD9C\uB825 \uC2E4\uD328 \u2014 step1(finishReason=${step1.finishReason}${step1Hint}): ${step1Result.reason} / step2(finishReason=${step2.finishReason}): ${step2Result.reason}
+    `[llm-gateway] \uAD6C\uC870\uD654 \uCD9C\uB825 \uC2E4\uD328${schemaHint} \u2014 step1(finishReason=${step1.finishReason}${step1Hint}): ${step1Result.reason} / step2(finishReason=${step2.finishReason}): ${step2Result.reason}
 step2 \uC751\uB2F5 (\uCC98\uC74C 500\uC790): ${step2.text.slice(0, 500)}`,
     sumUsage(step1.usage, step2.usage)
   );
+}
+function isZodV3Schema(schema) {
+  return typeof schema === "object" && schema !== null && "_def" in schema && !("_zod" in schema);
+}
+async function buildSchemaBlock(schema) {
+  try {
+    const jsonSchema = isZodV3Schema(schema) ? (
+      // 런타임에 zod v3임을 확인한 뒤의 캐스팅. zod-to-json-schema의 파라미터 타입은
+      // 자신이 해석한 zod에 묶여 있어 zod v4 설치 환경에서 구조적으로 맞지 않는다.
+      zodToJsonSchema(schema, {
+        target: "openApi3"
+      })
+    ) : await asSchema(schema).jsonSchema;
+    const keys = Object.keys(jsonSchema ?? {}).filter((k) => k !== "$schema");
+    if (keys.length === 0) return "";
+    return JSON.stringify(jsonSchema, null, 2);
+  } catch {
+    return "";
+  }
 }
 function sumUsage(u1, u2) {
   const a = normalizeUsage(u1);

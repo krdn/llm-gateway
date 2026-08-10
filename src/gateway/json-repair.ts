@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import { asSchema, type FlexibleSchema } from 'ai';
 
 /**
  * LLM 텍스트 응답에서 JSON 문자열을 추출한다.
@@ -227,15 +227,31 @@ export type ParseValidateResult<T> =
   | { ok: true; data: T }
   | { ok: false; reason: string };
 
+/** Zod 에러에서 `필드: 사유` 요약을 뽑는다. v3·v4 모두 `issues[]` 형태가 같다. */
+function summarizeIssues(error: unknown): string | undefined {
+  const issues: unknown = (error as { issues?: unknown } | null)?.issues;
+  if (!Array.isArray(issues) || issues.length === 0) return undefined;
+  return issues
+    .map((i) => {
+      const { path, message } = i as { path?: readonly PropertyKey[]; message?: string };
+      return `${(path ?? []).map(String).join('.')}: ${message ?? '검증 실패'}`;
+    })
+    .join(', ');
+}
+
 /**
- * JSON 추출 → 파싱 → Zod 검증.
+ * JSON 추출 → 파싱 → 스키마 검증.
  * 실패 시 `{ ok: false, reason }`으로 원인을 호출자에게 전달한다
- * (JSON.parse 에러 메시지 또는 Zod issue 요약).
+ * (JSON.parse 에러 메시지 또는 검증 issue 요약).
+ *
+ * 검증은 `safeParse` 직접 호출이 아니라 AI SDK의 `asSchema().validate`를 거친다 —
+ * zod v3·v4를 한 경로로 다루기 위해서다. 반환 에러는 여전히 ZodError이므로
+ * `issues` 기반 요약은 그대로 유지된다.
  */
-export function tryParseAndValidate<T>(
+export async function tryParseAndValidate<T>(
   text: string,
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
-): ParseValidateResult<T> {
+  schema: FlexibleSchema<T>,
+): Promise<ParseValidateResult<T>> {
   if (!text || text.trim().length === 0) {
     return { ok: false, reason: '빈 응답' };
   }
@@ -251,12 +267,16 @@ export function tryParseAndValidate<T>(
     };
   }
 
-  const validated = schema.safeParse(parsed);
-  if (!validated.success) {
-    const issues = validated.error.issues
-      .map((i) => `${i.path.join('.')}: ${i.message}`)
-      .join(', ');
-    return { ok: false, reason: `Zod 검증 실패: ${issues}` };
+  const validate = asSchema(schema).validate;
+  if (!validate) {
+    // 검증기 없는 스키마(JSON Schema만 가진 Schema 등)를 조용히 통과시키지 않는다.
+    return { ok: false, reason: '스키마에 validate가 없어 검증할 수 없음' };
   }
-  return { ok: true, data: validated.data };
+
+  const validated = await validate(parsed);
+  if (!validated.success) {
+    const reason = summarizeIssues(validated.error) ?? validated.error.message;
+    return { ok: false, reason: `Zod 검증 실패: ${reason}` };
+  }
+  return { ok: true, data: validated.value };
 }

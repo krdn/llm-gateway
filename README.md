@@ -32,12 +32,12 @@
 ## 설치
 
 ```bash
-pnpm add @krdn/llm-gateway zod@^3.24
+pnpm add @krdn/llm-gateway zod
 ```
 
-> **zod는 3.x 전용** (`^3.24`) — zod 4는 미지원. 배포 타입 선언이 zod 3의 `z.ZodTypeDef`를 사용하고,
-> text2step 폴백이 의존하는 `zod-to-json-schema`가 zod 4 스키마를 지원하지 않는다.
-> pnpm은 peer 불일치를 **경고만** 하고 설치를 진행하므로, zod 4를 설치하면 typecheck/런타임 오류로 직행한다.
+> **zod 3·4를 모두 지원한다** (`^3.25.76 || ^4.1.8` — 의존하는 `ai@6`의 범위와 동일).
+> 하한이 3.25.76인 이유는 그 미만에서 `ai`의 peer가 깨지기 때문이다.
+> `zod/v3`·`zod/v4` 서브패스로 만든 스키마도 그대로 받는다.
 
 `gemini-cli` 프로바이더를 쓸 경우에만 추가로:
 

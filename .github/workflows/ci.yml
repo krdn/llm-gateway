@@ -22,3 +22,21 @@ jobs:
       - run: pnpm lint --max-warnings 0
       - run: pnpm test
       - run: pnpm build
+
+  # peerDependencies가 zod 3·4를 모두 광고하므로 zod 4 설치 그래프도 실제로 검증한다.
+  # lockfile은 zod 3을 고정하고 있어 위 test 잡만으로는 zod 4 경로가 한 번도 돌지 않는다.
+  zod4:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # lockfile 갱신 없이 이 잡에서만 zod를 4.x로 교체한다 (--no-frozen-lockfile 필요)
+      - run: pnpm add -D zod@^4.1.8 --no-frozen-lockfile
+      - run: node -e "console.log('zod', require('zod/package.json').version)"
+      - run: pnpm typecheck
+      - run: pnpm test

@@ -1,5 +1,4 @@
-import { generateText, type FinishReason, type LanguageModelUsage } from 'ai';
-import type { z } from 'zod';
+import { generateText, type FinishReason, type FlexibleSchema, type LanguageModelUsage } from 'ai';
 import type { AIProvider } from './provider-meta';
 import { getModel } from './model-factory';
 import { executeStructured } from './strategies';
@@ -87,16 +86,16 @@ export async function analyzeText(
  * 파싱/검증 실패 시 즉시 에러를 전파하며 재시도하지 않는다
  * (`runModule`의 `retryWithPolicy`도 rate limit/서버 과부하만 재시도한다).
  *
- * @template T Zod 스키마가 검증하는 결과 타입
+ * @template T 스키마가 검증하는 결과 타입
  * @param prompt 사용자 프롬프트
- * @param schema 응답을 검증할 Zod 스키마
+ * @param schema 응답을 검증할 스키마 (zod v3·v4 모두 지원)
  * @param options 게이트웨이 옵션
  * @returns `{ object, usage, finishReason }` — usage는 전략(native/text2step)에
  *          무관하게 항상 정규화된 `NormalizedUsage` 형태다.
  */
 export async function analyzeStructured<T>(
   prompt: string,
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: FlexibleSchema<T>,
   options: AIGatewayOptions = {},
 ) {
   const provider = options.provider ?? 'anthropic';

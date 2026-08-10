@@ -2,7 +2,7 @@
 //
 // 사용자는 자기 도메인의 입력 타입(TInput)과 결과 타입(TResult)을 지정해
 // AnalysisModule을 정의한다. runModule은 입력 형태에 대해 알지 못한다.
-import type { z } from 'zod';
+import type { FlexibleSchema } from 'ai';
 import type { AIProvider } from './gateway/provider-meta';
 import type { NormalizedUsage } from './gateway/normalize-usage';
 
@@ -26,7 +26,14 @@ export interface AnalysisModule<TInput = unknown, TResult = unknown> {
   readonly provider: AIProvider;
   /** 모듈 기본 모델 — configAdapter가 있으면 adapter 결과가 우선 */
   readonly model: string; // 'gemini-2.5-flash', 'claude-sonnet-4-6' 등
-  readonly schema: z.ZodType<TResult, z.ZodTypeDef, unknown>;
+  /**
+   * 결과를 검증할 스키마. zod v3·v4 양쪽을 받는다 (AI SDK의 `FlexibleSchema`).
+   *
+   * zod의 타입을 직접 참조하지 않는 이유: v4가 `ZodTypeDef`를 없애 3-인자
+   * `ZodType<T, ZodTypeDef, unknown>` 별칭이 v4에서 출력 타입 추론을 잃는다.
+   * `FlexibleSchema<T>`는 출력 타입이 유일한 인자라 두 메이저 모두에서 추론이 산다.
+   */
+  readonly schema: FlexibleSchema<TResult>;
 
   buildPrompt(data: TInput): string;
   buildSystemPrompt(): string;

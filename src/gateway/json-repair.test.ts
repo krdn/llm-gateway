@@ -274,34 +274,34 @@ describe('repairTruncatedJson', () => {
 describe('tryParseAndValidate', () => {
   const TestSchema = z.object({ summary: z.string(), score: z.number() });
 
-  it('문자열 내 중괄호 절단이 optional 스키마에서 빈 객체로 통과하지 않는다 (silent data loss 회귀 방지)', () => {
+  it('문자열 내 중괄호 절단이 optional 스키마에서 빈 객체로 통과하지 않는다 (silent data loss 회귀 방지)', async () => {
     const OptionalSchema = z.object({
       code: z.string().optional(),
       cut: z.string().optional(),
     });
-    const result = tryParseAndValidate('{"code": "if (x) { y }", "cut": "tr', OptionalSchema);
+    const result = await tryParseAndValidate('{"code": "if (x) { y }", "cut": "tr', OptionalSchema);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.code).toBe('if (x) { y }');
   });
 
-  it('유효한 JSON + 스키마 통과 → { ok: true, data }', () => {
-    const result = tryParseAndValidate('{"summary": "ok", "score": 90}', TestSchema);
+  it('유효한 JSON + 스키마 통과 → { ok: true, data }', async () => {
+    const result = await tryParseAndValidate('{"summary": "ok", "score": 90}', TestSchema);
     expect(result).toEqual({ ok: true, data: { summary: 'ok', score: 90 } });
   });
 
-  it('빈 응답 → { ok: false, reason: 빈 응답 }', () => {
-    const result = tryParseAndValidate('   ', TestSchema);
+  it('빈 응답 → { ok: false, reason: 빈 응답 }', async () => {
+    const result = await tryParseAndValidate('   ', TestSchema);
     expect(result).toEqual({ ok: false, reason: '빈 응답' });
   });
 
-  it('파싱 불가 텍스트 → JSON.parse 실패 사유 포함', () => {
-    const result = tryParseAndValidate('definitely not json', TestSchema);
+  it('파싱 불가 텍스트 → JSON.parse 실패 사유 포함', async () => {
+    const result = await tryParseAndValidate('definitely not json', TestSchema);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toContain('JSON.parse 실패');
   });
 
-  it('스키마 불일치 → Zod issue 요약 포함', () => {
-    const result = tryParseAndValidate('{"summary": "ok", "score": "high"}', TestSchema);
+  it('스키마 불일치 → issue 요약 포함', async () => {
+    const result = await tryParseAndValidate('{"summary": "ok", "score": "high"}', TestSchema);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toContain('Zod 검증 실패');
@@ -309,8 +309,8 @@ describe('tryParseAndValidate', () => {
     }
   });
 
-  it('falsy 최상위 값(false)도 ok:true로 정상 판별', () => {
-    const result = tryParseAndValidate('false', z.literal(false));
+  it('falsy 최상위 값(false)도 ok:true로 정상 판별', async () => {
+    const result = await tryParseAndValidate('false', z.literal(false));
     expect(result).toEqual({ ok: true, data: false });
   });
 });

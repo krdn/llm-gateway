@@ -2,8 +2,14 @@
 // provider capability(supportsStructuredOutput)에 따라 native 구조화 출력 또는
 // text2step(generateText 2-call 폴백)을 실행한다.
 // 모든 전략은 { object, usage: NormalizedUsage, finishReason } 단일 형태를 반환한다.
-import { generateText, Output, type FinishReason, type LanguageModel } from 'ai';
-import type { z } from 'zod';
+import {
+  asSchema,
+  generateText,
+  Output,
+  type FinishReason,
+  type FlexibleSchema,
+  type LanguageModel,
+} from 'ai';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { normalizeUsage, type NormalizedUsage } from './normalize-usage';
 import { tryParseAndValidate } from './json-repair';
@@ -58,9 +64,22 @@ export class StructuredOutputError extends Error {
 export async function executeStructured<T>(
   provider: AIProvider,
   model: LanguageModel,
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: FlexibleSchema<T>,
   opts: StrategyExecuteOptions,
 ): Promise<StrategyResult<T>> {
+  // 검증기 없는 스키마는 프로바이더 호출 **전에** 막는다. `FlexibleSchema`는
+  // `jsonSchema()`로 만든 검증기 없는 `Schema`도 받는데, 그대로 두면
+  // native 경로는 `Output.object`가 검증을 건너뛰어 스키마에 맞지 않는 출력을
+  // 그대로 통과시키고(검증된 출력이라는 계약 위반), 폴백 경로는 두 번의 유료
+  // 호출을 태운 뒤에야 실패한다. getModel이 레지스트리 불변식을 지키는 것과
+  // 같은 이유로, 여기가 단일 깔때기다.
+  if (!asSchema(schema).validate) {
+    throw new Error(
+      '[llm-gateway] 스키마에 validate가 없어 응답을 검증할 수 없다 — ' +
+        'zod 스키마를 넘기거나 `jsonSchema(schema, { validate })`로 검증기를 지정할 것.',
+    );
+  }
+
   return needsTextFallback(provider)
     ? executeText2Step(model, schema, opts)
     : executeNative(provider, model, schema, opts);
@@ -70,7 +89,7 @@ export async function executeStructured<T>(
 async function executeNative<T>(
   provider: AIProvider,
   model: LanguageModel,
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: FlexibleSchema<T>,
   opts: StrategyExecuteOptions,
 ): Promise<StrategyResult<T>> {
   const result = await generateText({
@@ -108,29 +127,29 @@ async function executeNative<T>(
  */
 async function executeText2Step<T>(
   model: LanguageModel,
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: FlexibleSchema<T>,
   opts: StrategyExecuteOptions,
 ): Promise<StrategyResult<T>> {
-  let schemaBlock = '';
-  try {
-    const jsonSchema = zodToJsonSchema(schema, { target: 'openApi3' });
-    schemaBlock = JSON.stringify(jsonSchema, null, 2);
-  } catch {
-    /* 변환 실패 시 스키마 힌트 없이 진행 */
-  }
+  const schemaBlock = await buildSchemaBlock(schema);
 
   // ── 1단계: 분석 수행 (JSON 출력 시도) ──
   const systemWithJsonHint = (opts.systemPrompt ?? '') + `
 
 IMPORTANT: Respond in valid JSON format only. Start with { and end with }.`;
 
-  const promptWithSchema = `${opts.prompt}
+  // 힌트가 있을 때의 프롬프트는 기존과 바이트 단위로 동일하다. 없을 때만 섹션을 통째로 뺀다.
+  const promptWithSchema =
+    `${opts.prompt}
 
 ---
-Respond as a JSON object matching this schema:
+` +
+    (schemaBlock
+      ? `Respond as a JSON object matching this schema:
 ${schemaBlock}
 
-Output JSON only. Start with {.`;
+`
+      : '') +
+    `Output JSON only. Start with {.`;
 
   const step1 = await generateText({
     model,
@@ -140,7 +159,7 @@ Output JSON only. Start with {.`;
     abortSignal: opts.abortSignal,
   });
 
-  const step1Result = tryParseAndValidate(step1.text, schema);
+  const step1Result = await tryParseAndValidate(step1.text, schema);
   if (step1Result.ok) {
     return {
       object: step1Result.data,
@@ -160,16 +179,21 @@ Rules:
 - If information is missing, use reasonable defaults ("" for strings, 0 for numbers, [] for arrays).`;
 
   const analysisText = step1.text.slice(0, CONVERTER_INPUT_MAX_CHARS);
-  const converterPrompt = `Convert this analysis into JSON:
+  const converterPrompt =
+    `Convert this analysis into JSON:
 
 """
 ${analysisText}
 """
 
-Target JSON schema:
+` +
+    (schemaBlock
+      ? `Target JSON schema:
 ${schemaBlock}
 
-Output the JSON object now:`;
+`
+      : '') +
+    `Output the JSON object now:`;
 
   const step2 = await generateText({
     model,
@@ -179,7 +203,7 @@ Output the JSON object now:`;
     abortSignal: opts.abortSignal,
   });
 
-  const step2Result = tryParseAndValidate(step2.text, schema);
+  const step2Result = await tryParseAndValidate(step2.text, schema);
   if (step2Result.ok) {
     return {
       object: step2Result.data,
@@ -189,13 +213,55 @@ Output the JSON object now:`;
   }
 
   const step1Hint = step1.finishReason === 'length' ? ', 토큰 제한 절단' : '';
+  // 스키마 힌트 없이 돈 실행은 성공률이 크게 떨어진다. 원인 추적이 가능하도록 남긴다.
+  const schemaHint = schemaBlock ? '' : ' (스키마 힌트 없이 실행됨 — JSON Schema 변환 실패)';
   throw new StructuredOutputError(
-    `[llm-gateway] 구조화 출력 실패 — ` +
+    `[llm-gateway] 구조화 출력 실패${schemaHint} — ` +
       `step1(finishReason=${step1.finishReason}${step1Hint}): ${step1Result.reason} / ` +
       `step2(finishReason=${step2.finishReason}): ${step2Result.reason}\n` +
       `step2 응답 (처음 500자): ${step2.text.slice(0, 500)}`,
     sumUsage(step1.usage, step2.usage),
   );
+}
+
+/**
+ * zod v3 스키마 판별. v3 인스턴스는 `_def`를 갖고 v4의 내부 마커 `_zod`가 없다.
+ * (v4 인스턴스는 `_def`와 `_zod`를 모두 갖는다.)
+ */
+function isZodV3Schema(schema: unknown): boolean {
+  return typeof schema === 'object' && schema !== null && '_def' in schema && !('_zod' in schema);
+}
+
+/**
+ * 폴백 프롬프트에 실을 JSON Schema 블록을 만든다. 실패하면 빈 문자열.
+ *
+ * zod v3만 기존 `zodToJsonSchema(target:'openApi3')` 출력을 유지한다 — 이 문자열은
+ * 그대로 프롬프트에 들어가므로 경로를 바꾸면 기존 소비자의 폴백 동작이 (라이브
+ * 프로바이더 없이는 검증할 수 없는 채로) 변한다.
+ *
+ * 그 외(zod v4, AI SDK `Schema`, StandardSchema)는 `asSchema().jsonSchema`를 쓴다.
+ * zod-to-json-schema 3.25.x는 v4 스키마를 받으면 **예외 없이 `{}`를 반환**하므로
+ * try/catch로는 이 실패를 잡을 수 없다 — 분기가 필요한 이유가 이것이다.
+ */
+async function buildSchemaBlock(schema: FlexibleSchema<unknown>): Promise<string> {
+  try {
+    const jsonSchema = isZodV3Schema(schema)
+      ? // 런타임에 zod v3임을 확인한 뒤의 캐스팅. zod-to-json-schema의 파라미터 타입은
+        // 자신이 해석한 zod에 묶여 있어 zod v4 설치 환경에서 구조적으로 맞지 않는다.
+        zodToJsonSchema(schema as unknown as Parameters<typeof zodToJsonSchema>[0], {
+          target: 'openApi3',
+        })
+      : await asSchema(schema).jsonSchema;
+
+    // 빈 객체는 힌트가 없는 것보다 나쁘다 — 모델에게 "필드 없는 객체"를 지시하는 꼴이다.
+    const keys = Object.keys(jsonSchema ?? {}).filter((k) => k !== '$schema');
+    if (keys.length === 0) return '';
+
+    return JSON.stringify(jsonSchema, null, 2);
+  } catch {
+    /* 변환 실패 시 스키마 힌트 없이 진행 */
+    return '';
+  }
 }
 
 /** 두 호출의 usage를 각각 정규화한 뒤 합산하여 단일 NormalizedUsage로 반환 */
