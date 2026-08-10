@@ -1,6 +1,6 @@
 {
   "name": "@krdn/llm-gateway",
-  "version": "4.1.2",
+  "version": "5.0.0",
   "description": "Multi-provider LLM gateway — unified interface for Anthropic, OpenAI, Gemini, DeepSeek, Ollama, and more. Structured output with JSON repair, retry with backoff, token normalization.",
   "type": "module",
   "license": "MIT",
@@ -47,10 +47,10 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.67",
-    "@ai-sdk/google": "^3.0.59",
-    "@ai-sdk/openai": "^3.0.51",
-    "ai": "^6.0.149",
+    "@ai-sdk/anthropic": "^4.0.36",
+    "@ai-sdk/google": "^4.0.39",
+    "@ai-sdk/openai": "^4.0.36",
+    "ai": "^7.0.58",
     "zod-to-json-schema": "^3.25.2"
   },
   "peerDependencies": {
@@ -70,7 +70,7 @@
     "zod": "^3.25.76"
   },
   "engines": {
-    "node": ">=20.3.0"
+    "node": ">=22.0.0"
   },
   "keywords": [
     "llm",

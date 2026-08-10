@@ -9,15 +9,22 @@ on:
     branches: [main]
 
 jobs:
+  # engines가 광고하는 하한(22)과 소비자가 실제로 쓰는 버전(24)에서 각각 돈다.
+  # 이전에는 Node 20 하나였는데, 20은 2026-04-30에 EOL이라 지원되지 않는
+  # 런타임에서만 검증하고 있었다.
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v7
       # pnpm 버전은 package.json의 packageManager 필드에서 읽는다 (단일 출처)
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
@@ -34,7 +41,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # 이 잡에서만 zod를 4.x로 교체한다. `pnpm add`는 lockfile을 갱신하지만
@@ -85,7 +92,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build

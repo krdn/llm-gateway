@@ -7,12 +7,26 @@
 ## 특징
 
 - **AI 프로바이더 게이트웨이**: Anthropic Claude, Google Gemini, OpenAI, Ollama, OpenRouter, DeepSeek, xAI, Gemini CLI, Claude CLI Proxy 통합
-- **Vercel AI SDK v6** 기반 구조화 출력 (`generateText` + `Output.object`) + 미지원 프로바이더용 텍스트 2-call 폴백 (잘린 JSON 자동 복구 포함)
+- **Vercel AI SDK v7** 기반 구조화 출력 (`generateText` + `Output.object`) + 미지원 프로바이더용 텍스트 2-call 폴백 (잘린 JSON 자동 복구 포함)
 - **제네릭 모듈 엔진**: `AnalysisModule<TInput, TResult>` — 입력/결과 모두 도메인 자유
 - **어댑터 패턴**: `ModelConfigAdapter`, `PipelineControlAdapter` — DB·취소·비용 한도 의존성을 인터페이스로 추상화
 - **Rate limit / 서버 과부하 자동 재시도** (선형 backoff — attempt × 3s, retry-after 안내가 있으면 그 값과 큰 쪽; retry-after 상한으로 일일 쿼터 폭주 방지)
 - **부분 실패 허용** — 실패한 모듈도 throw하지 않고 `failed` 상태 반환 (discriminated union)
 - **취소/타임아웃 전파** — `abortSignal`/`timeoutMs`가 진행 중인 LLM 호출까지 중단
+
+## v5.0.0 주요 변경 (BREAKING)
+
+- **Vercel AI SDK v7로 올렸다** (`ai` v6→v7, `@ai-sdk/*` v3→v4). **공개 API는 바뀌지
+  않는다** — `analyzeText`/`analyzeStructured`/`runModule`의 시그니처와 타입,
+  `zod` peer 범위(`^3.25.76 || ^4.1.8`)가 모두 그대로다. 소비자 코드 수정은 필요 없고,
+  아래 Node 요구사항만 확인하면 된다.
+- **Node 22.0.0 이상** 필요 (기존 20.3.0). Node 20이 2026-04-30에 EOL이 됐고,
+  `ai@7` 자신이 `engines: >=22`를 요구한다 — 하한을 두면 만족 불가능한 조합을
+  광고하게 된다. CI도 22·24 두 버전에서 돈다.
+- 부수 효과: `undici`가 5.29 → 7.29로 올라가 런타임 의존성의 알려진 취약점
+  10건(WebSocket 관련 high 3건 포함)이 해소된다.
+
+자세한 내역은 [CHANGELOG.md](./CHANGELOG.md) 참고.
 
 ## v4.0.0 주요 변경 (BREAKING)
 
@@ -35,7 +49,7 @@
 pnpm add @krdn/llm-gateway zod
 ```
 
-> **zod 3·4를 모두 지원한다** (`^3.25.76 || ^4.1.8` — 의존하는 `ai@6`의 범위와 동일).
+> **zod 3·4를 모두 지원한다** (`^3.25.76 || ^4.1.8` — 의존하는 `ai@7`의 범위와 동일).
 > 하한이 3.25.76인 이유는 그 미만에서 `ai`의 peer가 깨지기 때문이다.
 > `zod/v3`·`zod/v4` 서브패스로 만든 스키마도 그대로 받는다.
 
@@ -214,7 +228,7 @@ import { ... } from '@krdn/llm-gateway/adapters';   // 어댑터만
 
 ## 구조화 출력 (Anthropic) — v3.4.0
 
-구조화 출력을 네이티브 지원하는 프로바이더는 `analyzeStructured`가 Vercel AI SDK v6의 `generateText` + `Output.object`로 처리한다(미지원 프로바이더는 text2step — `generateText` 2회 + JSON 파싱).
+구조화 출력을 네이티브 지원하는 프로바이더는 `analyzeStructured`가 Vercel AI SDK v7의 `generateText` + `Output.object`로 처리한다(미지원 프로바이더는 text2step — `generateText` 2회 + JSON 파싱).
 
 **Anthropic은 `structuredOutputMode: 'jsonTool'`(classic tool_use)로 강제한다.** `@ai-sdk/anthropic`의 기본값 `auto`는 신형 `output_config.format`(Anthropic structured outputs)을 선택하는데, 이 경로는 JSON Schema 부분집합만 허용해 다음을 거부한다:
 

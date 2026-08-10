@@ -16,7 +16,7 @@ pnpm lint             # eslint src
 
 ## Architecture
 
-**@krdn/llm-gateway** is a domain-agnostic multi-provider LLM gateway library built on Vercel AI SDK v6. It has three modules, each with its own subpath export:
+**@krdn/llm-gateway** is a domain-agnostic multi-provider LLM gateway library built on Vercel AI SDK v7. It has three modules, each with its own subpath export:
 
 ### Gateway (`src/gateway/`)
 
@@ -24,7 +24,7 @@ The AI provider abstraction layer.
 
 - **`provider-meta.ts`** — Central registry (`PROVIDER_REGISTRY`, readonly) of all provider metadata: access method, structured output support, SDK call method (`direct` vs `chat`), default API keys (keyless **local** servers only — ollama/custom; `claude-cli` is NOT keyless: cli-proxy-api validates `config.yaml` api-keys, so apiKey is required), base URLs. Pure data — no SDK imports. Safe for browser bundles. `requiresApiKey`/`requiresBaseUrl` are consumer-facing metadata (UI form validation 등) — the runtime check in `getModel` is mechanically driven by `defaultApiKey`/`defaultBaseUrl` presence; the alignment between the two is enforced by `provider-meta.test.ts` invariant tests.
 - **`model-factory.ts`** — `getModel()` factory + `SDK_MAP` + `DEFAULT_MODELS`. Registry-driven dispatcher for provider client creation that **enforces registry invariants**: unknown provider, missing model (no default), missing apiKey (chat providers without a `defaultApiKey`), and missing baseUrl all throw descriptive errors instead of falling back silently. `gemini-cli` is the only special case (dynamic import of the optional peer dependency `ai-sdk-provider-gemini-cli`; **local `~/.gemini` OAuth 전용 — baseUrl/apiKey 인자는 무시되며 cli-proxy-api와 무관한 별도 크레덴셜/쿼터 경로**).
-- **`strategies.ts`** — `executeStructured(provider, model, schema, opts)`: branches on provider capability. Native path uses `generateText` + `Output.object` (AI SDK v6; `generateObject` is deprecated). Fallback path (`executeText2Step`) is a 2-call text→JSON pipeline for CLI proxies/Ollama/custom. Its prompt schema hint is built by `buildSchemaBlock()`, which **branches at runtime**: zod v3 keeps the legacy `zodToJsonSchema(target:'openApi3')` output (prompt bytes unchanged for existing consumers), everything else (zod v4, `Schema`, StandardSchema) goes through `asSchema().jsonSchema` — `zod-to-json-schema` 3.25.x returns `{}` for v4 schemas **without throwing**, so try/catch cannot detect it. An empty conversion omits the schema section entirely rather than embedding `{}`. Both return `{ object, usage: NormalizedUsage, finishReason }`. On double failure, the thrown error carries each step's parse/validation reason and finishReason.
+- **`strategies.ts`** — `executeStructured(provider, model, schema, opts)`: branches on provider capability. Native path uses `generateText` + `Output.object` (AI SDK v7; `generateObject` is deprecated). Fallback path (`executeText2Step`) is a 2-call text→JSON pipeline for CLI proxies/Ollama/custom. Its prompt schema hint is built by `buildSchemaBlock()`, which **branches at runtime**: zod v3 keeps the legacy `zodToJsonSchema(target:'openApi3')` output (prompt bytes unchanged for existing consumers), everything else (zod v4, `Schema`, StandardSchema) goes through `asSchema().jsonSchema` — `zod-to-json-schema` 3.25.x returns `{}` for v4 schemas **without throwing**, so try/catch cannot detect it. An empty conversion omits the schema section entirely rather than embedding `{}`. Both return `{ object, usage: NormalizedUsage, finishReason }`. On double failure, the thrown error carries each step's parse/validation reason and finishReason.
 - **`json-repair.ts`** — `extractJson()` (LLM 텍스트에서 JSON 추출), `repairTruncatedJson()` (escape-aware 단일 스캔으로 토큰 초과 절단 복구 — 문자열 중간 절단 포함), `tryParseAndValidate()` (추출→파싱→검증, `{ ok, data | reason }` 반환; **async** — 검증은 `asSchema().validate`를 거쳐 zod v3·v4를 한 경로로 다룬다).
 - **`normalize-usage.ts`** — `normalizeUsage(usage: unknown)`: provider별 usage 필드명 차이 정규화. gateway.ts와 strategies.ts가 공유 (순환 의존 방지용 분리).
 - **`gateway.ts`** — Two public entrypoints: `analyzeText()` (free text; usage = provider raw fields merged with normalized fields) and `analyzeStructured()` (Zod-validated structured output; usage = `NormalizedUsage`). Merges external abort signals with the timeout via `AbortSignal.any`. No console output anywhere in the library — diagnostics travel in error messages and runner callbacks.
@@ -67,8 +67,18 @@ Dependency injection interfaces for external concerns:
 @krdn/llm-gateway/runner    # runModule + retryWithPolicy + retry utils
 ```
 
+## Testing
+
+Most suites mock `ai` wholesale (`vi.mock('ai')` replacing `generateText`), which pins *how we call* the SDK but not *what the SDK does* with those arguments.
+
+**`src/gateway/sdk-contract.test.ts` is the exception and must stay that way**: it does NOT mock `ai`. Only the `@ai-sdk/*` factories are mocked, returning a `MockLanguageModelV4` from `ai/test`, so real `generateText` / `Output.object` / `asSchema` execute. It is a canary for SDK upgrades, not a second coverage layer — it pins the layers a major bump moves: `Output.object` → `responseFormat` JSON Schema (including constraints like `minimum`/`maxLength`), provider's nested usage → flat `NormalizedUsage`, the output-resolve condition, and which error type surfaces. Keep the mock's spec version aligned with what real providers use (`createAnthropic({apiKey:'x'})('m').specificationVersion` — `v4` on `ai@7`); a mismatched mock silently tests a path consumers never take. Do not mix it into a file that mocks `ai` — `vi.mock` hoists per module.
+
 ## Release / CI
 
-- `ci.yml`: typecheck → lint (`--max-warnings 0`) → test → build. pnpm version comes from `packageManager` in package.json (single source of truth).
-- `publish.yml`: GitHub release → npm publish (with provenance) → consumer repository-dispatch (`notify` job runs only after publish succeeds).
-- `zod` is a peerDependency (+devDependency), **v3 and v4 both supported** (`^3.25.76 || ^4.1.8`, mirroring `ai@6`); `ai-sdk-provider-gemini-cli` is an **optional** peerDependency (dynamic import).
+- `ci.yml`: typecheck → lint (`--max-warnings 0`) → test → build, on Node **22 and 24** (matrix). pnpm version comes from `packageManager` in package.json (single source of truth).
+- `dist-freshness` job (tags only): rebuilds and `git diff`s `dist/`. This repo commits `dist` per release to support Git-URL installs (`github:krdn/llm-gateway#vX.Y.Z`) and a real consumer uses that path — v4.1.1 shipped a stale `dist` before this guard existed. It runs on tags only so the existing "commit at release" convention isn't silently turned into "commit always". Valid because tsup output is deterministic and sourcemap `sources` are relative.
+- `publish.yml`: GitHub release → npm publish (with provenance) → consumer repository-dispatch (`notify` job runs only after publish succeeds). `notify` currently fails on an expired `CONSUMER_DISPATCH_PAT`; `publish` itself is unaffected.
+- `zod` is a peerDependency (+devDependency), **v3 and v4 both supported** (`^3.25.76 || ^4.1.8`, mirroring `ai@7`); `ai-sdk-provider-gemini-cli` is an **optional** peerDependency (dynamic import).
+- Node floor is `>=22.0.0` — Node 20 hit EOL 2026-04-30 and `ai@7` itself requires `>=22`.
+
+Note when inspecting build output: tsup escapes non-ASCII string literals — Korean text becomes `\uXXXX` sequences in `dist/*.js`. Grepping `dist/` for a Korean literal silently finds nothing even when the code is there; match on ASCII fragments (e.g. `finishReason=`) or decode the file first.
