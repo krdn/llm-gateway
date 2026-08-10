@@ -275,7 +275,11 @@ export async function tryParseAndValidate<T>(
 
   const validated = await validate(parsed);
   if (!validated.success) {
-    const reason = summarizeIssues(validated.error) ?? validated.error.message;
+    // `error`는 타입상 필수지만 소비자가 직접 쓴 validate 콜백이 들어올 수 있는
+    // 경계다. 여기서 throw하면 폴백 경로가 이미 과금한 usage를 실은
+    // StructuredOutputError 대신 일반 예외로 새어 비용 집계가 깨진다.
+    const reason =
+      summarizeIssues(validated.error) ?? validated.error?.message ?? '사유 없음';
     return { ok: false, reason: `Zod 검증 실패: ${reason}` };
   }
   return { ok: true, data: validated.value };

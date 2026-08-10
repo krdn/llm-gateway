@@ -27,6 +27,7 @@ vi.mock('ai', async (importOriginal) => {
 });
 
 import { analyzeStructured } from './gateway';
+import { StructuredOutputError } from './strategies';
 import { tryParseAndValidate } from './json-repair';
 import { generateText, jsonSchema } from 'ai';
 
@@ -167,6 +168,37 @@ describe('검증 경로 — v3·v4 동일 동작', () => {
     const schema = z4.object({ a: z4.string() });
     const result = await tryParseAndValidate('{"a": "ok"}', schema);
     expect(result).toEqual({ ok: true, data: { a: 'ok' } });
+  });
+
+  it('커스텀 validate가 error 없이 실패해도 던지지 않는다', async () => {
+    // 소비자가 직접 쓴 validate 콜백은 시스템 경계다. `error`는 타입상 필수지만
+    // JS 소비자는 `{ success: false }`만 반환할 수 있다.
+    const malformed = jsonSchema<{ a: string }>(
+      { type: 'object', properties: { a: { type: 'string' } } },
+      { validate: () => ({ success: false }) as unknown as { success: false; error: Error } },
+    );
+
+    const result = await tryParseAndValidate('{"a": 1}', malformed);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('Zod 검증 실패');
+  });
+
+  it('그 경우에도 폴백 경로는 usage를 실은 StructuredOutputError를 유지한다', async () => {
+    // TypeError로 새면 두 번 과금한 usage가 비용 집계에서 사라진다.
+    const malformed = jsonSchema<{ a: string }>(
+      { type: 'object', properties: { a: { type: 'string' } } },
+      { validate: () => ({ success: false }) as unknown as { success: false; error: Error } },
+    );
+    mockText('{"a": "x"}');
+    mockText('{"a": "y"}');
+
+    const err = await analyzeStructured('분석해줘', malformed, FALLBACK_OPTS).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(StructuredOutputError);
+    expect((err as StructuredOutputError).usage.totalTokens).toBe(40);
   });
 
   it('v4 스키마 불일치 시 필드 수준 사유가 남는다', async () => {

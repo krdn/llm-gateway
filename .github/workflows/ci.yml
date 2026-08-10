@@ -38,6 +38,25 @@ jobs:
       # 이 잡에서만 zod를 4.x로 교체한다. `pnpm add`는 lockfile을 갱신하지만
       # 러너 한정이라 저장소에 반영되지 않는다 (--frozen-lockfile은 install 전용 옵션).
       - run: pnpm add -D zod@^4.1.8
-      - run: node -e "console.log('zod', require('zod/package.json').version)"
+      # 메이저를 hard-fail로 강제한다. 회귀 테스트는 `zod/v3`·`zod/v4` 서브패스를 쓰는데
+      # 그 서브패스가 두 메이저 모두에 있어서, 루트 zod가 3.x에 머물러도 테스트는 통과한다.
+      # 즉 이 확인이 없으면 잡이 초록이어도 zod 4 설치 그래프를 검증했다는 보장이 없다.
+      # `ai`가 해석하는 zod까지 함께 보는 이유: 우리 타입은 `ai`의 FlexibleSchema를 경유한다.
+      - name: zod 4 설치 그래프 확인 (hard assert)
+        run: |
+          node -e '
+            const req = (p) => require(p).version;
+            const checks = {
+              root: req("zod/package.json"),
+              viaAi: req(require.resolve("zod/package.json", { paths: [require.resolve("ai")] })),
+            };
+            console.log(checks);
+            for (const [k, v] of Object.entries(checks)) {
+              if (!v.startsWith("4.")) {
+                console.error(`zod 4가 아니다 (${k}=${v}) — 이 잡의 목적이 무효다`);
+                process.exit(1);
+              }
+            }
+          '
       - run: pnpm typecheck
       - run: pnpm test
