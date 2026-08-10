@@ -27,6 +27,16 @@ updates:
       # typecheck 실패로 실증). 메이저는 사람이 릴리스 계획과 함께 결정한다.
       - dependency-name: zod
         update-types: ['version-update:semver-major']
+      # AI SDK 계열은 소비자에게 나가는 런타임 dependency인데, 테스트가 전부
+      # mock 기반(vi.mock('ai') 등)이라 CI 초록이 SDK 호환성을 증명하지 못한다.
+      # PR #5(ai v6→v7, 프로바이더 v3→v4)가 통과한 것이 그 예다. 메이저는
+      # 마이그레이션 가이드를 보고 사람이 옮긴다. minor·patch는 자동화 유지.
+      - dependency-name: ai
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@ai-sdk/*'
+        update-types: ['version-update:semver-major']
+      - dependency-name: ai-sdk-provider-*
+        update-types: ['version-update:semver-major']
     groups:
       ai-sdk:
         patterns:
