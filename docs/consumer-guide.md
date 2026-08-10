@@ -101,7 +101,7 @@ llm-gateway에서 새 버전이 릴리스되면, 소비자 프로젝트에 자�
 llm-gateway에서 GitHub Release 생성
 │
 ├─① publish.yml → npm publish (즉시)
-│   └─ notify-consumers.yml 이 소비자 레포에 dispatch 전송 → 즉시 PR 생성
+│   └─ 같은 워크플로우의 notify job이 소비자 레포에 dispatch 전송 → 즉시 PR 생성
 │
 ├─② Dependabot (매일)
 │   └─ npm 레지스트리에서 새 버전 감지 → PR 생성
@@ -112,17 +112,20 @@ llm-gateway에서 GitHub Release 생성
 
 ### 1단계: llm-gateway 레포에 소비자 등록
 
-`.github/workflows/notify-consumers.yml`에 새 소비자 레포로의 dispatch를 추가합니다.
-현재는 `krdn/gons-dashboard` 단일 step이므로, 소비자가 여러 개라면 matrix로 전환하세요:
+`.github/workflows/publish.yml`의 `notify` job matrix에 새 소비자 레포를 추가합니다
+(현재 `krdn/gons-dashboard`, `krdn/ai-signalcraft` 두 개가 등록되어 있습니다):
 
 ```yaml
 jobs:
   notify:
+    needs: publish
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false # 한 소비자 dispatch 실패가 다른 소비자 알림을 취소하지 않도록
       matrix:
         repo:
           - krdn/gons-dashboard
+          - krdn/ai-signalcraft
           - krdn/새-소비자-레포   # ← 추가
     steps:
       - uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3
@@ -145,7 +148,7 @@ jobs:
 `docs/skills/llm-gateway-consumer-setup/templates/update-llm-gateway.yml`
 (`{{PNPM_VERSION}}` / `{{NODE_VERSION}}`를 프로젝트 값으로 치환)
 
-> dispatch 계약: 발행자 `notify-consumers.yml`은 `event-type: llm-gateway-release`,
+> dispatch 계약: 발행자(`publish.yml`의 `notify` job)는 `event-type: llm-gateway-release`,
 > payload `{"tag": ...}`를 보냅니다. 워크플로우의 `types:`는 `llm-gateway-release`여야 합니다.
 
 ### 3단계: Dependabot 또는 Renovate 설정 (백업)
