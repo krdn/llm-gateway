@@ -43,7 +43,19 @@ updates:
           - ai
           - '@ai-sdk/*'
           - ai-sdk-provider-*
+      # typescript와 @typescript-eslint/*는 서로를 기다리므로 한 PR에 묶어야 하고,
+      # 동시에 나머지 dev 툴링과는 분리해야 한다. typescript-eslint가 TS 7을 아직
+      # 지원하지 않아(`does not support TS 7.0` 하드 가드) 이 조합은 지원이 도착할
+      # 때까지 CI가 빨갛게 남는데, 한 그룹에 있으면 무관한 업데이트까지 함께 막힌다.
+      # 분리해두면 지원 도착 시 둘이 함께 올라가 통과하고, 그때까지 나머지는 흐른다.
+      typescript-toolchain:
+        patterns:
+          - typescript
+          - '@typescript-eslint/*'
       dev-tooling:
         dependency-type: development
+        exclude-patterns:
+          - typescript
+          - '@typescript-eslint/*'
     commit-message:
       prefix: chore
