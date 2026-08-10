@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **`zod` peer 범위 하한 수정** (`^3.24.0` → `^3.25.76`) — 의존성 `ai@6`이
+  `zod ^3.25.76`을, `zod-to-json-schema`가 `^3.25.28`을 요구하는데 우리 하한이
+  그보다 낮았다. zod 3.24.x를 설치한 소비자는 우리 peer는 만족하면서 `ai`의
+  peer를 위반하는 상태가 됐다. 실제로 동작 가능한 최소치로 맞춘 것이라
+  범위가 좁아졌음에도 새로 깨지는 조합은 없다.
+
 ## 4.0.1 (2026-07-12)
 
 - `NormalizedUsage`를 interface → type으로 변경 — interface는 선언 병합 가능성
