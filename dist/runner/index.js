@@ -379,8 +379,8 @@ async function tryParseAndValidate(text, schema) {
 var CONVERTER_INPUT_MAX_CHARS = 32e3;
 var StructuredOutputError = class extends Error {
   usage;
-  constructor(message, usage) {
-    super(message);
+  constructor(message, usage, options) {
+    super(message, options);
     this.name = "StructuredOutputError";
     this.usage = usage;
   }
@@ -411,11 +411,12 @@ async function executeNative(provider, model, schema, opts) {
   let object;
   try {
     object = result.output;
-  } catch {
+  } catch (cause) {
     const hint = result.finishReason === "length" ? " \u2014 \uD1A0\uD070 \uC81C\uD55C \uC808\uB2E8, maxOutputTokens\uB97C \uB298\uB9B4 \uAC83" : "";
     throw new StructuredOutputError(
       `[llm-gateway] \uAD6C\uC870\uD654 \uCD9C\uB825 \uC2E4\uD328 \u2014 \uD504\uB85C\uBC14\uC774\uB354\uAC00 \uC644\uACB0\uB41C \uCD9C\uB825\uC744 \uB0B4\uC9C0 \uC54A\uC558\uB2E4 (finishReason=${result.finishReason})${hint}`,
-      normalizeUsage(result.usage)
+      normalizeUsage(result.usage),
+      { cause }
     );
   }
   return {

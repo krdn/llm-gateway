@@ -23,6 +23,11 @@
 - **Node 22.0.0 이상** 필요 (기존 20.3.0). Node 20이 2026-04-30에 EOL이 됐고,
   `ai@7` 자신이 `engines: >=22`를 요구한다 — 하한을 두면 만족 불가능한 조합을
   광고하게 된다. CI도 22·24 두 버전에서 돈다.
+- **native 경로의 실패 에러 타입이 바뀌었다** (동작 자체는 4.1.2부터). 프로바이더가
+  완결된 출력을 내지 않으면(토큰 절단 등) AI SDK의 `NoOutputGeneratedError` 대신
+  usage를 실은 `StructuredOutputError`가 올라온다 — 실패한 호출의 과금을 집계에
+  보존하기 위해서다. 원본 에러는 `cause`에 남는다. 스키마 위반은 종전대로
+  `NoObjectGeneratedError`다.
 - 부수 효과: `undici`가 5.29 → 7.29로 올라가 런타임 의존성의 알려진 취약점
   10건(WebSocket 관련 high 3건 포함)이 해소된다.
 

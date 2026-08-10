@@ -44,8 +44,8 @@ const CONVERTER_INPUT_MAX_CHARS = 32_000;
 export class StructuredOutputError extends Error {
   readonly usage: NormalizedUsage;
 
-  constructor(message: string, usage: NormalizedUsage) {
-    super(message);
+  constructor(message: string, usage: NormalizedUsage, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = 'StructuredOutputError';
     this.usage = usage;
   }
@@ -111,16 +111,22 @@ async function executeNative<T>(
     abortSignal: opts.abortSignal,
   });
 
-  // SDK는 finishReason이 'stop'일 때만 output을 resolve한다. 절단(length) 등으로
-  // 그렇지 않으면 `result.output` 접근이 NoOutputGeneratedError를 던지는데, 그
-  // 에러는 usage를 싣지 않아 **이미 과금된 토큰이 집계에서 사라진다**
-  // (runModule의 실패-usage 보존은 StructuredOutputError·NoObjectGeneratedError만
-  // 인식한다). 폴백 경로가 이중 실패를 StructuredOutputError로 감싸는 것과 같은
-  // 이유로, native 경로도 사유와 usage를 실어 던진다.
+  // SDK는 finishReason이 'stop'일 때만 output을 resolve한다. 그 외 모든 값
+  // (length·tool-calls·content-filter·error·other — 실측으로 전부 확인)에서
+  // `result.output` 접근은 NoOutputGeneratedError를 던지는데, 그 에러는 usage를
+  // 싣지 않아 **이미 과금된 토큰이 집계에서 사라진다** (runModule의 실패-usage
+  // 보존은 StructuredOutputError·NoObjectGeneratedError만 인식한다). 폴백 경로가
+  // 이중 실패를 StructuredOutputError로 감싸는 것과 같은 이유로, native 경로도
+  // 사유와 usage를 실어 던진다.
+  //
+  // 선검사(`finishReason !== 'stop'`)가 아니라 접근을 try로 감싸는 이유: 동작은
+  // 같지만(위 실측), SDK가 나중에 resolve 조건을 넓히면 이쪽만 자동으로 따라간다.
+  // 원본 에러는 cause로 남긴다 — 여기서 걸리는 것이 NoOutputGeneratedError가
+  // 아닐 가능성(그 자체가 계약 변화의 신호다)을 뭉개지 않기 위해서다.
   let object: T;
   try {
     object = result.output;
-  } catch {
+  } catch (cause) {
     const hint =
       result.finishReason === 'length'
         ? ' — 토큰 제한 절단, maxOutputTokens를 늘릴 것'
@@ -129,6 +135,7 @@ async function executeNative<T>(
       `[llm-gateway] 구조화 출력 실패 — 프로바이더가 완결된 출력을 내지 않았다 ` +
         `(finishReason=${result.finishReason})${hint}`,
       normalizeUsage(result.usage),
+      { cause },
     );
   }
 
