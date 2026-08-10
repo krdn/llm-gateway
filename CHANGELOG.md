@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.1.1 (2026-08-11)
+
+- **폴백 경로에서 커스텀 `validate`가 `error` 없이 실패하면 `TypeError`로 샜다.**
+  `ValidationResult.error`는 타입상 필수지만, 4.1.0에서 공개 API를 `FlexibleSchema`로
+  넓히면서 소비자가 직접 쓴 validate 콜백이 들어올 수 있게 됐다 — 즉 시스템 경계다.
+  여기서 예외가 나면 두 번 과금한 usage를 실은 `StructuredOutputError` 대신 일반
+  예외가 올라가 비용 집계가 깨졌다. zod 스키마만 쓰는 소비자에게는 영향이 없다.
+- CI의 zod 4 잡이 메이저 버전을 실제로 강제하지 않던 것을 hard-fail 검사로 교체했다
+  (회귀 테스트가 `zod/v3`·`zod/v4` 서브패스를 써서 버전 독립적인 것이 원인이었다).
+
 ## 4.1.0 (2026-08-10)
 
 - **zod v4 지원** — peer가 `^3.25.76 || ^4.1.8`이 됐다 (`ai@6`의 범위와 동일).
