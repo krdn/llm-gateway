@@ -9,6 +9,7 @@ pnpm install          # Install dependencies
 pnpm build            # Build with tsup (ESM, dts, sourcemaps)
 pnpm test             # Run all tests (vitest)
 pnpm test -- src/gateway/get-model.test.ts  # Run a single test file
+pnpm test:coverage    # Coverage (v8). barrel/types.ts는 계측 제외 — vitest.config.ts
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # eslint src
 ```
