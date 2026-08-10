@@ -7,3 +7,12 @@ coverage
 .vitest-cache
 .tsbuildinfo
 # dist는 release 시 커밋 (Git URL 설치 패턴)
+
+# 로컬 분석 도구 산출물 (understand-anything, claude-mem, graphify, ecc 등)
+.ua/
+.memsearch/
+.reports/
+graphify-out/
+agentdb.rvf
+agentdb.rvf.lock
+ruvector.db
