@@ -13,7 +13,7 @@ export default defineConfig({
   clean: true,
   splitting: false,
   treeshake: true,
-  target: 'node20',
+  target: 'node22',
   outDir: 'dist',
   external: [
     '@ai-sdk/anthropic',
