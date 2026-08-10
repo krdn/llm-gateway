@@ -7,15 +7,21 @@
 // SDK 메이저 업그레이드에서 그 계층이 바뀌어도 CI는 초록이다.
 //
 // 여기서는 mock 경계를 **provider 구현**까지 내린다. `@ai-sdk/*` 팩토리만
-// MockLanguageModelV3를 반환하도록 바꾸고, 그 위의 `ai` core는 실제로 돌린다.
+// MockLanguageModelV4를 반환하도록 바꾸고, 그 위의 `ai` core는 실제로 돌린다.
 // 커버리지를 다시 얻자는 게 아니라, SDK 업그레이드가 깨뜨릴 지점만 고정하는
 // 카나리다. 여기가 빨개지면 SDK의 계약이 움직인 것이다.
+//
+// mock 스펙 버전은 **실제 프로바이더가 쓰는 것과 맞춰야 한다**. `ai/test`는 V3와
+// V4를 모두 export하고 core가 둘 다 받으므로 V3로도 테스트는 통과하지만, 그러면
+// 소비자가 실제로 타지 않는 경로를 검증하게 된다. 확인 방법은
+// `createAnthropic({apiKey:'x'})('m').specificationVersion` — ai@6 계열
+// (@ai-sdk/* v3)은 'v3', ai@7 계열(v4)은 'v4'다.
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { MockLanguageModelV3 } from 'ai/test';
+import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { z as z4 } from 'zod/v4';
 
-/** provider 레벨(LanguageModelV3 spec)의 usage — SDK가 평면 형태로 변환한다 */
+/** provider 레벨(LanguageModelV4 spec)의 usage — SDK가 평면 형태로 변환한다 */
 function providerUsage(input: number, output: number) {
   return {
     inputTokens: { total: input, noCache: input, cacheRead: 0, cacheWrite: 0 },
@@ -36,7 +42,7 @@ const hoisted = vi.hoisted(() => ({
 function installModel(...turns: Turn[]): void {
   let i = 0;
   hoisted.calls = [];
-  hoisted.model = new MockLanguageModelV3({
+  hoisted.model = new MockLanguageModelV4({
     doGenerate: async (options) => {
       hoisted.calls.push(options as unknown as Record<string, unknown>);
       const turn = turns[Math.min(i++, turns.length - 1)];

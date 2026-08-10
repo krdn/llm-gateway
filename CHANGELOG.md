@@ -1,5 +1,31 @@
 # Changelog
 
+## 5.0.0 (2026-08-11)
+
+**마이그레이션 요약: 소비자 코드 수정은 없다. Node 22 이상인지만 확인하면 된다.**
+
+- **Vercel AI SDK v7** (`ai` v6→v7, `@ai-sdk/*` v3→v4).
+  - **공개 API는 바뀌지 않는다.** `analyzeText`·`analyzeStructured`·`runModule`의
+    시그니처, `AnalysisModule`/`AnalysisModuleResult`/`NormalizedUsage` 타입,
+    어댑터 인터페이스가 모두 그대로다. `zod` peer 범위도 `^3.25.76 || ^4.1.8`로
+    동일하다 (v7의 `@ai-sdk/*`가 같은 범위를 요구한다).
+  - 검증 방법: 소비자 2곳의 실제 사용 패턴(로컬 `AnalysisModule` 정의를 kit 타입에
+    할당하는 것 포함)을 v7 빌드의 `dist/*.d.ts`에 대해 컴파일해 v6 결과와
+    대조했다. 또한 `sdk-contract.test.ts`가 provider 경계까지만 mock하고 SDK를
+    실제로 돌리는데, v7이 쓰는 `LanguageModelV4` 스펙으로 전환한 뒤에도 전 항목이
+    통과한다 — 스키마의 `responseFormat` 변환, provider usage의 중첩→평면 정규화,
+    output resolve 조건, 에러 타입이 v6과 동일하다.
+- **Node 22.0.0 이상 필요** (기존 `>=20.3.0`). Node 20은 2026-04-30에 EOL이 됐고,
+  `ai@7` 자신이 `engines: >=22`를 요구한다 — 하한을 그대로 두면 만족할 수 없는 조합을
+  광고하게 된다. **이 릴리스에서 유일하게 소비자 조치가 필요할 수 있는 항목이다.**
+  CI도 22·24 두 버전 matrix로 바뀌었다 (이전에는 EOL된 20 하나에서만 돌았다).
+- **런타임 의존성 취약점 10건 해소** — `undici`가 5.29 → 7.29로 올라간다
+  (`@ai-sdk/provider-utils` v5 경유). WebSocket 관련 high 3건을 포함해 열려 있던
+  runtime scope alert이 전부 패치 범위(`< 6.28.0`) 위로 이동한다.
+
+두 항목을 하나의 major로 묶은 이유: 각각 따로 내면 소비자가 연속으로 두 번 major를
+겪는데, Node 하한은 어차피 v7이 강제하므로 분리할 실익이 없다.
+
 ## 4.1.2 (2026-08-11)
 
 - **native 경로에서 응답이 절단되면 과금된 usage가 집계에서 사라지던 것을 고쳤다.**
