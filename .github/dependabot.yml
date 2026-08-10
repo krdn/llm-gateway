@@ -1,0 +1,32 @@
+version: 2
+
+updates:
+  # GitHub Actions — 액션 런타임 deprecation(예: Node 20 → 24)으로 CI에 경고가
+  # 쌓이기 전에 갱신한다. publish.yml의 SHA 핀도 `# vX.Y.Z` 주석을 근거로 함께
+  # 올라가므로 supply-chain 고정을 유지한 채 최신화된다.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
+
+  # npm — AI SDK 계열은 릴리스가 잦아 한 그룹으로 묶어 PR 수를 억제한다.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      ai-sdk:
+        patterns:
+          - ai
+          - '@ai-sdk/*'
+          - ai-sdk-provider-*
+      dev-tooling:
+        dependency-type: development
+    commit-message:
+      prefix: chore
