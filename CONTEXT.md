@@ -1,6 +1,6 @@
 # @krdn/llm-gateway
 
-A domain-agnostic, multi-provider LLM gateway library built on Vercel AI SDK v6. This file records the project's ubiquitous language so that architecture reviews and grilling sessions use one consistent vocabulary.
+A domain-agnostic, multi-provider LLM gateway library built on Vercel AI SDK v7. This file records the project's ubiquitous language so that architecture reviews and grilling sessions use one consistent vocabulary.
 
 ## Language
 
@@ -9,11 +9,11 @@ A configured LLM backend the gateway can talk to (anthropic, openai, gemini, ope
 _Avoid_: vendor, backend, model (a Provider serves many Models)
 
 **Provider capability**:
-A pure-data fact about what a **Provider** can do — `supportsStructuredOutput`, `requiresJsonMode` — held in `provider-meta.ts` and kept SDK-import-free so it is safe in a browser bundle.
+A pure-data fact about what a **Provider** can do — `supportsStructuredOutput`, `callMethod`, `accessMethod` — held in `provider-meta.ts` and kept SDK-import-free so it is safe in a browser bundle.
 _Avoid_: feature flag, provider option
 
 **Structured-output strategy**:
-The technique used to obtain a Zod-validated object from a **Provider** — one of `native` (`generateObject`) or `text2step` (two `generateText` calls + JSON extraction). The strategy *identifier* is selected from **Provider capability** data; the strategy *execution* (call sequence, prompt shaping, usage normalization) lives in the SDK layer.
+The technique used to obtain a Zod-validated object from a **Provider** — one of `native` (`generateText` + `Output.object`) or `text2step` (two `generateText` calls + JSON extraction). The strategy *identifier* is selected from **Provider capability** data; the strategy *execution* (call sequence, prompt shaping, usage normalization) lives in the SDK layer.
 _Avoid_: mode, path, branch, fallback (text2step is one strategy, not a fallback-as-afterthought)
 
 **Gateway**:
@@ -45,8 +45,8 @@ _Avoid_: token count, usage stats
 
 ## Example dialogue
 
-> **Dev:** "openrouter has `requiresJsonMode: true` — does it get its own **Structured-output strategy**?"
-> **Maintainer:** "No. Under AI SDK v6, `generateObject` picks the provider's structured-output mode internally, so there's no `mode:'json'` to pass. openrouter takes the `native` strategy like every other capable **Provider**. `requiresJsonMode` survives as **Provider capability** metadata, but it no longer selects a strategy. Only `text2step` is structurally different, because it's a two-call sequence."
+> **Dev:** "anthropic is forced to `structuredOutputMode: 'jsonTool'` — does that make it its own **Structured-output strategy**?"
+> **Maintainer:** "No. That's a provider-namespaced option *inside* the `native` strategy — anthropic's default `auto` picks a JSON Schema subset that rejects `minimum`/`maxItems`, so we pin classic tool_use to keep schema constraints. The call sequence is unchanged: one `generateText` with `Output.object`. A **Structured-output strategy** is distinguished by its *shape*, not its options — which is why only `text2step` is a separate one: it's a two-call sequence that pays a second LLM call by design."
 
 ## Flagged ambiguities
 

@@ -183,11 +183,18 @@ Renovate를 사용하려면 GitHub repo에 [Renovate App](https://github.com/app
 | minor | `3.3.0` → `3.4.0` | 기능 추가 |
 | major | `3.3.0` → `4.0.0` | 호환성 깨지는 변경 |
 
-### 2. 커밋 + 푸시
+### 2. 빌드 + 커밋 + 푸시
+
+**`pnpm build`를 먼저 돌려야 한다.** 이 저장소는 `dist/`를 릴리스마다 커밋해 Git URL 설치
+(`github:krdn/llm-gateway#vX.Y.Z`)를 지원하므로, 커밋된 dist가 곧 그 경로의 소비자가 받는
+코드다. 빌드를 건너뛰면 소스만 바뀐 태그가 만들어지고 소비자는 낡은 코드를 받는다 —
+v4.1.1이 실제로 그랬다. 지금은 태그 시점의 `dist-freshness` 잡이 이를 hard fail로 막지만,
+막힌 뒤 되돌리는 것보다 순서를 지키는 편이 싸다.
 
 ```bash
-git add .
-git commit -m "release: v3.4.0 — 변경 내용 설명"
+pnpm build                       # dist/ 재생성 — 생략 금지
+git add .                        # 소스 + dist를 같은 커밋에
+git commit -m "chore: 3.4.0 릴리스 — 변경 내용 설명"
 git push origin main
 ```
 

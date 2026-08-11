@@ -54,7 +54,7 @@ export class StructuredOutputError extends Error {
 /**
  * provider capability에 따라 구조화 출력을 실행한다.
  *
- * - 네이티브 지원 → `generateText` + `Output.object` (AI SDK v6가 provider별
+ * - 네이티브 지원 → `generateText` + `Output.object` (AI SDK v7이 provider별
  *   structured-output 모드를 내부에서 선택)
  * - 미지원 (CLI 프록시, Ollama, custom) → 텍스트 2-call 폴백
  *
