@@ -45,6 +45,10 @@ jobs:
           # 2026-08-11에 CONSUMER_DISPATCH_PAT을 재설정해 두 소비자 모두 dispatch가
           # 정상 동작함을 확인했다(v5.0.0 재실행). 수신측 daily cron이 여전히 백업 경로다.
           - krdn/ai-signalcraft
+          # scrapecraft 자가치유의 Propose 워커. 수신측은 ai-signalcraft 와 같은
+          # update-llm-gateway.yml(llm-gateway-release 계약)이며, dispatch 가
+          # 유실될 때를 위해 cron + dependabot 백업도 둔다.
+          - krdn/scrapecraft-evolution
     steps:
       - name: Dispatch release event to ${{ matrix.repo }}
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
