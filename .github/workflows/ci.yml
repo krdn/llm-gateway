@@ -32,6 +32,48 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  # engines가 광고하는 하한은 **정확히 22.0.0**인데 위 matrix의 `22`는 러너가 주는
+  # 최신 22.x다. 그 사이(22.0 이후 22.x에 추가된 API)를 쓰면 광고된 하한에서만 깨지고
+  # CI는 초록이다 — 광고를 검증하지 않는 잡이 광고를 지킨다고 읽히는 자리다
+  # (2026-08-10 codex 리뷰). 소비자가 실제로 받는 것과 같은 **packed tarball**을 그
+  # 버전에서 import해 그 구간을 막는다. 빌드는 최신에서 하고 실행만 하한에서 하는
+  # 이유: 하한에서 깨질 수 있는 것은 우리 산출물이지 빌드 도구가 아니다.
+  #
+  # 실측(2026-08-20, node:22.0.0-slim 컨테이너): 이 절차가 v22.0.0에서 통과한다 —
+  # 즉 이 잡은 지금 초록이고, 빨개지면 그것이 곧 하한 위반의 신호다.
+  node-floor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: npm pack --pack-destination /tmp
+      # 여기서부터 하한이다. 빌드 산출물은 위에서 이미 만들어졌다.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.0.0
+      - name: packed artifact를 광고된 하한에서 import
+        run: |
+          node -v
+          mkdir -p /tmp/smoke && cd /tmp/smoke
+          npm init -y > /dev/null
+          npm install /tmp/*.tgz --no-audit --no-fund
+          node --input-type=module -e '
+            import { analyzeText, analyzeStructured } from "@krdn/llm-gateway";
+            for (const [name, fn] of Object.entries({ analyzeText, analyzeStructured })) {
+              if (typeof fn !== "function") {
+                console.error(`::error::${name}이 함수가 아니다 — 하한에서 모듈이 온전히 로드되지 않았다`);
+                process.exit(1);
+              }
+            }
+            console.log("하한 smoke 통과: " + process.version);
+          '
+
   # peerDependencies가 zod 3·4를 모두 광고하므로 zod 4 설치 그래프도 실제로 검증한다.
   # lockfile은 zod 3을 고정하고 있어 위 test 잡만으로는 zod 4 경로가 한 번도 돌지 않는다.
   zod4:
