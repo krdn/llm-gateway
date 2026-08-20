@@ -27,7 +27,7 @@
 // `createAnthropic({apiKey:'x'})('m').specificationVersion` — ai@6 계열
 // (@ai-sdk/* v3)은 'v3', ai@7 계열(v4)은 'v4'다.
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { MockLanguageModelV4 } from 'ai/test';
+import { MockLanguageModelV3, MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { z as z4 } from 'zod/v4';
 
@@ -298,5 +298,49 @@ describe('SDK 계약 — analyzeText', () => {
     await analyzeText('분석해줘', { provider: 'anthropic' });
 
     expect(hoisted.calls[0]?.abortSignal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+// ── 선택적 peer(gemini-cli)가 타는 V3 경로 ─────────────────────────────
+//
+// 위 테스트는 전부 V4 다. 우리가 설치한 `@ai-sdk/*` 가 `@ai-sdk/provider@4` 를 쓰기
+// 때문인데, **선택적 peer 로 계속 광고하는 `ai-sdk-provider-gemini-cli@2.x` 는
+// `@ai-sdk/provider@^3.0.0` 에 의존한다**(npm 메타데이터, 2026-08-20 확인). 즉 그
+// 소비자가 core 에 넣는 것은 LanguageModelV3 이고, 그 경로는 여기 한 번도 오지
+// 않았다 (2026-08-10 codex 리뷰).
+//
+// 그 패키지를 devDependency 로 들여 진짜 경로를 태우지는 않는다 — `@google/gemini-cli-core`
+// 트리가 딸려와 Dependabot critical 을 만드는 것이 이 저장소가 타입 shim 을 손으로 쓴
+// 이유다(`src/types/ai-sdk-provider-gemini-cli.d.ts`). 그래서 **spec 버전만** 흉내 내
+// 잠근다. 이 카나리가 지키는 명제는 하나다: **core 는 V3 모델도 계속 받는다.**
+// 그것이 거짓이 되면 gemini-cli 소비자는 런타임에 깨지는데 V4 테스트는 전부 초록이다.
+//
+// **한계는 정직하게**: 여기서 쓰는 V3 는 우리가 설치한 `@ai-sdk/provider@4` 가 정의하는
+// V3 이고, 소비자가 설치하는 `@ai-sdk/provider@3` 의 V3 와 형태가 어긋나면 이 카나리는
+// 그것을 잡지 못한다. 잡는 것은 **core 쪽의 V3 지원 철회** 하나다 — 그것이 두 갈래
+// (V3 로 검증 / peer 광고 철회) 중 우리가 설치 없이 지킬 수 있는 범위다.
+describe('SDK 계약 — 선택적 peer 가 타는 V3 경로', () => {
+  it('core 는 V3 spec 모델도 계속 받는다', async () => {
+    hoisted.calls = [];
+    hoisted.model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        hoisted.calls.push(options as unknown as Record<string, unknown>);
+        return {
+          content: [{ type: 'text' as const, text: '안녕' }],
+          finishReason: { unified: 'stop' as const, raw: 'stop' },
+          // V3 의 usage 도 V4 와 같은 **중첩** 모양이다(`LanguageModelV3Usage`).
+          // 평면으로 주면 core 가 0 으로 정규화하는데, 그것은 우리 결함이 아니라
+          // 잘못 만든 mock 이다 — 실측으로 확인하고 헬퍼를 재사용한다.
+          usage: providerUsage(11, 3),
+          warnings: [],
+        };
+      },
+    });
+
+    const result = await analyzeText('인사해줘', { provider: 'anthropic' });
+
+    expect(result.text).toBe('안녕');
+    expect(result.usage).toMatchObject({ inputTokens: 11, outputTokens: 3 });
+    expect(hoisted.calls).toHaveLength(1);
   });
 });
