@@ -17,7 +17,7 @@ import { analyzeText } from '@krdn/llm-gateway/gateway';
 
 const result = await analyzeText('이 기사를 요약해줘', {
   provider: 'anthropic',
-  model: 'claude-sonnet-4-6',
+  model: 'claude-sonnet-5',
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 console.log(result.text);
@@ -38,7 +38,7 @@ const SentimentSchema = z.object({
 const result = await analyzeStructured(
   '이 리뷰의 감정을 분석해줘: 정말 최고의 제품입니다!',
   SentimentSchema,
-  { provider: 'openai', model: 'gpt-4.1-nano', apiKey: process.env.OPENAI_API_KEY },
+  { provider: 'openai', model: 'gpt-5.6-luna', apiKey: process.env.OPENAI_API_KEY },
 );
 console.log(result.object); // { sentiment: 'positive', score: 95, summary: '...' }
 ```
@@ -51,7 +51,7 @@ import { createInMemoryModelConfig } from '@krdn/llm-gateway/adapters';
 
 const configAdapter = createInMemoryModelConfig({
   modules: {
-    'sentiment': { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+    'sentiment': { provider: 'anthropic', model: 'claude-sonnet-5' },
   },
   providerDefaults: {
     anthropic: { apiKey: process.env.ANTHROPIC_API_KEY },

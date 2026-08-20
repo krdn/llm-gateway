@@ -56,7 +56,7 @@ export class StructuredOutputError extends Error {
  *
  * - 네이티브 지원 → `generateText` + `Output.object` (AI SDK v7이 provider별
  *   structured-output 모드를 내부에서 선택)
- * - 미지원 (CLI 프록시, Ollama, custom) → 텍스트 2-call 폴백
+ * - 미지원 (DeepSeek, CLI 프록시, Ollama, custom) → 텍스트 2-call 폴백
  *
  * @param provider capability 판정에 사용할 프로바이더
  * @param model getModel()이 생성한 LanguageModel

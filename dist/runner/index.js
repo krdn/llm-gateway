@@ -46,7 +46,10 @@ var PROVIDER_REGISTRY = {
     requiresApiKey: true,
     requiresBaseUrl: false,
     defaultBaseUrl: "https://api.deepseek.com/v1",
-    supportsStructuredOutput: true,
+    // DeepSeek API는 response_format 'json_object'만 받고 AI SDK Output.object가
+    // 보내는 'json_schema'는 400("This response_format type is unavailable now")으로
+    // 거부한다 (2026-08-20 v4-flash/v4-pro/deepseek-chat 전부 실측) → text2step 폴백.
+    supportsStructuredOutput: false,
     callMethod: "chat",
     color: "bg-purple-500"
   },
@@ -130,10 +133,10 @@ function needsTextFallback(provider) {
 
 // src/gateway/model-factory.ts
 var DEFAULT_MODELS = {
-  anthropic: "claude-sonnet-4-6",
-  openai: "gpt-4.1-nano",
-  gemini: "gemini-2.5-flash",
-  deepseek: "deepseek-chat"
+  anthropic: "claude-sonnet-5",
+  openai: "gpt-5.6-luna",
+  gemini: "gemini-3.7-flash",
+  deepseek: "deepseek-v4-flash"
 };
 var SDK_MAP = {
   anthropic: (opts) => createAnthropic(opts),

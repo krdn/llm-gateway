@@ -5,7 +5,7 @@ import { z } from 'zod';
 export async function summarize(text: string) {
   const result = await analyzeText(text, {
     provider: 'anthropic',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-5',
     apiKey: process.env.ANTHROPIC_API_KEY,
   });
   return result.text;
@@ -21,7 +21,7 @@ const SentimentSchema = z.object({
 export async function analyzeSentiment(review: string) {
   const result = await analyzeStructured(review, SentimentSchema, {
     provider: 'openai',
-    model: 'gpt-4.1-nano',
+    model: 'gpt-5.6-luna',
     apiKey: process.env.OPENAI_API_KEY,
   });
   return result.object;

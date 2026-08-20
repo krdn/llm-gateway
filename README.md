@@ -65,7 +65,7 @@ import { analyzeText } from '@krdn/llm-gateway';
 
 const { text, usage, finishReason } = await analyzeText('한 문장으로 요약해줘: ...', {
   provider: 'anthropic',
-  model: 'claude-sonnet-4-6',
+  model: 'claude-sonnet-5',
   systemPrompt: '너는 간결한 요약가다.',
   maxOutputTokens: 2048,
   timeoutMs: 60_000,
@@ -89,7 +89,7 @@ const { object, usage, finishReason } = await analyzeStructured(prompt, MySchema
 ```
 
 프로바이더가 구조화 출력을 네이티브 지원하면 `generateText` + `Output.object` 한 번으로 끝나고,
-지원하지 않으면(`claude-cli`·`gemini-cli`·`ollama`·`custom`) **자동으로 2-call 폴백**을 탑니다:
+지원하지 않으면(`deepseek`·`claude-cli`·`gemini-cli`·`ollama`·`custom`) **자동으로 2-call 폴백**을 탑니다:
 텍스트를 받아 JSON을 추출하고, 잘린 JSON은 복구를 시도한 뒤 스키마로 검증합니다.
 호출자가 분기할 필요는 없지만, **폴백 경로는 LLM을 두 번 호출하므로 비용이 약 2배**라는 점은 알아두세요.
 
@@ -115,10 +115,10 @@ const { object, usage, finishReason } = await analyzeStructured(prompt, MySchema
 
 | provider | 접근 | apiKey | baseUrl | 구조화 출력 | 기본 모델 |
 |---|---|---|---|---|---|
-| `anthropic` | 직접 API | 필요¹ | — | 네이티브 | `claude-sonnet-4-6` |
-| `openai` | 직접 API | 필요¹ | — | 네이티브 | `gpt-4.1-nano` |
-| `gemini` | 직접 API | 필요¹ | — | 네이티브 | `gemini-2.5-flash` |
-| `deepseek` | 직접 API | **필수** | 기본값 있음 | 네이티브 | `deepseek-chat` |
+| `anthropic` | 직접 API | 필요¹ | — | 네이티브 | `claude-sonnet-5` |
+| `openai` | 직접 API | 필요¹ | — | 네이티브 | `gpt-5.6-luna` |
+| `gemini` | 직접 API | 필요¹ | — | 네이티브 | `gemini-3.7-flash` |
+| `deepseek` | 직접 API | **필수** | 기본값 있음 | 2-call 폴백⁴ | `deepseek-v4-flash` |
 | `xai` | 직접 API | **필수** | 기본값 있음 | 네이티브 | 없음 — 지정 필수 |
 | `openrouter` | 직접 API | **필수** | 기본값 있음 | 네이티브 | 없음 — 지정 필수 |
 | `claude-cli` | CLI 프록시 | **필수**² | `http://localhost:8317` | 2-call 폴백 | 없음 — 지정 필수 |
@@ -132,6 +132,10 @@ const { object, usage, finishReason } = await analyzeStructured(prompt, MySchema
 ³ 로컬 `~/.gemini` OAuth **전용**입니다. `baseUrl`/`apiKey`를 넘겨도 무시되며, cli-proxy-api와는
    무관한 별도 크레덴셜·쿼터 경로입니다. 프록시의 Gemini 모델을 쓰려면 `custom` + `baseUrl` +
    프록시 키를 쓰세요.
+⁴ DeepSeek API는 `response_format` 으로 `json_object` 만 받고 AI SDK 가 보내는 `json_schema` 는
+   400 으로 거부합니다 (2026-08 실측). 그래서 2-call 폴백을 탑니다. 또 `deepseek-v4-flash` 는
+   **기본이 thinking 모드(effort high)** 라 짧은 답에도 추론 토큰이 수백 개 붙습니다 — `maxOutputTokens`
+   를 너무 낮게 주면 본문 없이 `finishReason: 'length'` 로 끝납니다.
 
 **기본 모델이 없는 프로바이더에 `model`을 안 주면 에러입니다.** 임의 모델명으로 폴백하지 않습니다 —
 잘못된 설정이 나중에 프로바이더의 불투명한 에러로 터지는 대신 즉시 드러나게 하려는 의도입니다.
@@ -194,7 +198,7 @@ const summarizer: AnalysisModule<ReviewInput, z.infer<typeof ResultSchema>> = {
   name: 'summarizer',              // 어댑터 조회 키
   displayName: '리뷰 요약',         // 사람이 읽는 이름
   provider: 'anthropic',           // configAdapter가 없을 때 쓰이는 기본값
-  model: 'claude-sonnet-4-6',
+  model: 'claude-sonnet-5',
   schema: ResultSchema,
   buildSystemPrompt: () => '너는 커머스 리뷰 분석가다. JSON만 출력한다.',
   buildPrompt: (data) =>
@@ -241,7 +245,7 @@ import { runModule, createInMemoryModelConfig } from '@krdn/llm-gateway';
 
 const configAdapter = createInMemoryModelConfig({
   modules: {
-    summarizer: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+    summarizer: { provider: 'anthropic', model: 'claude-sonnet-5' },
   },
   providerDefaults: {
     // 프로바이더 단위 공통값 — apiKey / baseUrl / model 만 받는다

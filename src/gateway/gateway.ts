@@ -80,7 +80,7 @@ export async function analyzeText(
  * Zod 스키마로 검증된 구조화 객체를 반환한다.
  *
  * 네이티브 구조화 출력을 지원하지 않는 프로바이더
- * (claude-cli, gemini-cli, ollama, custom 등)는 자동으로
+ * (deepseek, claude-cli, gemini-cli, ollama, custom 등)는 자동으로
  * `generateText` + JSON 추출 + Zod 파싱 폴백 경로를 사용한다.
  *
  * 파싱/검증 실패 시 즉시 에러를 전파하며 재시도하지 않는다

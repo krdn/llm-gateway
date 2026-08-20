@@ -1,15 +1,15 @@
 // @krdn/llm-gateway 실행 데모 — 쇼핑몰 리뷰 감정 분석 배치
 //
 // 실행:
-//   node examples/review-demo.mjs                        # 기본: openai / gpt-4.1-nano
-//   node examples/review-demo.mjs deepseek deepseek-chat # 프로바이더 교체 (코드 수정 없음)
+//   node examples/review-demo.mjs                        # 기본: openai / gpt-5.6-luna
+//   node examples/review-demo.mjs deepseek deepseek-v4-flash # 프로바이더 교체 (코드 수정 없음)
 //   node examples/review-demo.mjs ollama llama3.2        # 로컬 Ollama (키 불필요)
 //
 // API 키는 환경변수(OPENAI_API_KEY, DEEPSEEK_API_KEY, ...)에서 자동 해석된다.
 import { z } from 'zod';
 import { runModule, createInMemoryModelConfig } from '../dist/index.js';
 
-const [provider = 'openai', model = 'gpt-4.1-nano'] = process.argv.slice(2);
+const [provider = 'openai', model = 'gpt-5.6-luna'] = process.argv.slice(2);
 
 // ── 1. 결과 스키마 — LLM 응답은 이 스키마를 통과해야만 result가 된다
 const ReviewAnalysis = z.object({
@@ -23,7 +23,7 @@ const reviewModule = {
   name: 'review-sentiment',
   displayName: '리뷰 감정 분석',
   provider: 'openai', // configAdapter가 있으면 adapter 해석 결과가 우선
-  model: 'gpt-4.1-nano',
+  model: 'gpt-5.6-luna',
   schema: ReviewAnalysis,
   buildSystemPrompt: () =>
     '너는 쇼핑몰 리뷰 분석기다. 리뷰의 감정과 주된 불만 유형을 분류하고 한 문장으로 요약하라.',

@@ -61,7 +61,7 @@ describe('getModel', () => {
 
     it('model 미지정 시 기본 모델 사용', async () => {
       await getModel('anthropic');
-      expect(mockAnthropicClient).toHaveBeenCalledWith('claude-sonnet-4-6');
+      expect(mockAnthropicClient).toHaveBeenCalledWith('claude-sonnet-5');
     });
 
     it('apiKey 미전달 시 throw하지 않음 (AI SDK의 환경변수 폴백 허용)', async () => {
@@ -87,7 +87,7 @@ describe('getModel', () => {
 
     it('model 미지정 시 기본 모델 사용', async () => {
       await getModel('gemini');
-      expect(mockGoogleClient).toHaveBeenCalledWith('gemini-2.5-flash');
+      expect(mockGoogleClient).toHaveBeenCalledWith('gemini-3.7-flash');
     });
   });
 
@@ -215,16 +215,16 @@ describe('getModel', () => {
     it('model 미지정 시 기본 모델 사용', async () => {
       await getModel('openai');
       const client = vi.mocked(createOpenAI).mock.results[0]?.value;
-      expect(client).toHaveBeenCalledWith('gpt-4.1-nano');
+      expect(client).toHaveBeenCalledWith('gpt-5.6-luna');
     });
   });
 
   // ── 레지스트리 불변식 강제 ──
   describe('레지스트리 불변식 강제', () => {
-    it('deepseek: 기본 모델 deepseek-chat', async () => {
+    it('deepseek: 기본 모델 deepseek-v4-flash', async () => {
       await getModel('deepseek', undefined, undefined, 'sk-deep');
       const client = vi.mocked(createOpenAI).mock.results[0]?.value;
-      expect(client.chat).toHaveBeenCalledWith('deepseek-chat');
+      expect(client.chat).toHaveBeenCalledWith('deepseek-v4-flash');
     });
 
     it('기본 모델이 없는 프로바이더에 model 미지정 시 명시적 에러 (임의 폴백 금지)', async () => {

@@ -9,10 +9,10 @@ import {
 } from './provider-meta';
 
 const DEFAULT_MODELS: Partial<Record<AIProvider, string>> = {
-  anthropic: 'claude-sonnet-4-6',
-  openai: 'gpt-4.1-nano',
-  gemini: 'gemini-2.5-flash',
-  deepseek: 'deepseek-chat',
+  anthropic: 'claude-sonnet-5',
+  openai: 'gpt-5.6-luna',
+  gemini: 'gemini-3.7-flash',
+  deepseek: 'deepseek-v4-flash',
 };
 
 /** SDK 팩토리가 반환하는 클라이언트 — client(model) 직접 호출 또는 client.chat(model) */

@@ -25,7 +25,7 @@ export interface AnalysisModule<TInput = unknown, TResult = unknown> {
    */
   readonly provider: AIProvider;
   /** 모듈 기본 모델 — configAdapter가 있으면 adapter 결과가 우선 */
-  readonly model: string; // 'gemini-2.5-flash', 'claude-sonnet-4-6' 등
+  readonly model: string; // 'gemini-3.7-flash', 'claude-sonnet-5' 등
   /**
    * 결과를 검증할 스키마. zod v3·v4 양쪽을 받는다 (AI SDK의 `FlexibleSchema`).
    *

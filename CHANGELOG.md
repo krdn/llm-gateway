@@ -1,5 +1,46 @@
 # Changelog
 
+## 5.1.0 (2026-08-20)
+
+**마이그레이션 요약: `model` 을 명시하는 소비자는 영향 없다. `model` 을 생략해 기본값에
+기대던 소비자는 아래 표대로 모델이 바뀌고(비용·지연 변동), DeepSeek 은 구조화 출력이
+2-call 폴백으로 전환된다.**
+
+- **기본 모델 4종 갱신** (`DEFAULT_MODELS`) — 전부 벤더 공식 문서 기준이다.
+
+  | provider | 이전 | 이후 | 이유 |
+  |---|---|---|---|
+  | `gemini` | `gemini-2.5-flash` | `gemini-3.7-flash` | Google 모델 목록의 최신 GA Flash |
+  | `openai` | `gpt-4.1-nano` | `gpt-5.6-luna` | `gpt-4.1-nano` 는 **2026-10-23 종료** 예정이며, OpenAI deprecations 페이지가 대체 모델로 `gpt-5.6-luna` 를 지정 |
+  | `deepseek` | `deepseek-chat` | `deepseek-v4-flash` | `deepseek-chat` 은 2026-07-24 중단이 공지됐고 `/v1/models` 에서 이미 빠졌다 (비공식 별칭으로만 응답). 목록에 있는 일반 모델은 `deepseek-v4-flash`·`deepseek-v4-pro` 뿐 |
+  | `anthropic` | `claude-sonnet-4-6` | `claude-sonnet-5` | 같은 tier·같은 정가의 후속 모델 |
+
+  라이브 검증 범위(2026-08-20) — 검증한 것과 못 한 것을 구분한다:
+  - `gemini` + `gemini-3.7-flash`: **네이티브 구조화 출력 경로까지** 직접 API 로 확인.
+  - `deepseek` + `deepseek-v4-flash`: 직접 API 로 `analyzeStructured`(폴백)·`runModule` 확인.
+  - `claude-sonnet-5`·`gpt-5.6-luna`: Anthropic/OpenAI **직접 API 는 미검증** (키·크레딧 없음).
+    OpenAI 호환 프록시(`custom`/`claude-cli` 경로, 2-call 폴백)로 모델 ID 가 서빙되고 스키마대로
+    응답하는 것만 확인했다. `anthropic`/`openai` 프로바이더의 네이티브 `Output.object` 경로는
+    SDK 가 모델별로 분기하지 않으므로 이전 기본값과 같은 코드를 타지만, 실측은 아니다.
+
+- **`deepseek` 의 `supportsStructuredOutput` 을 `false` 로 정정 (결함 수정).** DeepSeek API 는
+  `response_format` 으로 `json_object` 만 받고, AI SDK `Output.object` 가 보내는 `json_schema` 는
+  `400 This response_format type is unavailable now` 로 거부한다 — `deepseek-chat` 포함 전 모델에서
+  재현됐으므로 **이전 버전에서도 `analyzeStructured({ provider: 'deepseek' })` 는 실패하고 있었다.**
+  이제 `claude-cli`·`ollama` 와 같은 text→JSON 2-call 폴백을 타며(호출 2회 = 비용 약 2배),
+  `usage` 는 그대로 `NormalizedUsage` 다. 에러 타입도 달라진다 — 이전에는 즉시 `400` 의
+  `APICallError` 가 올라왔고(재시도 없음), 이제는 폴백이 두 번 다 실패했을 때만
+  `StructuredOutputError` 가 올라온다.
+
+- **알아둘 것 — `deepseek-v4-flash` 는 기본이 thinking 모드(effort `high`)다.** 한 단어 답변에도
+  추론 토큰이 200~300개 붙어 `outputTokens` 에 합산된다. `maxOutputTokens` 를 아주 낮게(예: 16)
+  주면 본문 없이 `finishReason: 'length'` 로 끝난다. 게이트웨이 기본값(4096 / runner 8192)에서는
+  정상 동작을 확인했다. 게이트웨이는 provider 전용 본문 필드(`thinking`, `reasoning_effort`)를
+  노출하지 않으므로 비-thinking 이 꼭 필요하면 `custom` + `baseUrl` 로 직접 제어할 것.
+
+- 문서·예제(`README`, `docs/consumer-guide.md`, 소비자 셋업 템플릿, `examples/review-demo.mjs`)의
+  모델명을 위 기본값으로 맞췄다. 테스트 픽스처의 모델 문자열은 불투명 값이라 그대로 뒀다.
+
 ## 5.0.0 (2026-08-11)
 
 **마이그레이션 요약: 소비자 코드 수정은 없다. Node 22 이상인지만 확인하면 된다.**
