@@ -1,4 +1,4 @@
-import { generateText, asSchema, Output } from 'ai';
+import { generateText, asSchema, Output, NoObjectGeneratedError } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -416,23 +416,34 @@ async function executeNative(provider, model, schema, opts) {
     ...provider === "anthropic" ? { providerOptions: { anthropic: { structuredOutputMode: "jsonTool" } } } : {},
     maxOutputTokens: opts.maxOutputTokens,
     abortSignal: opts.abortSignal
+  }).catch((cause) => {
+    if (NoObjectGeneratedError.isInstance(cause) && cause.finishReason !== "stop") {
+      throw incompleteOutputError(cause.finishReason, cause.usage, cause);
+    }
+    throw cause;
   });
+  if (result.finishReason !== "stop") {
+    throw incompleteOutputError(result.finishReason, result.usage);
+  }
   let object;
   try {
     object = result.output;
   } catch (cause) {
-    const hint = result.finishReason === "length" ? " \u2014 \uD1A0\uD070 \uC81C\uD55C \uC808\uB2E8, maxOutputTokens\uB97C \uB298\uB9B4 \uAC83" : "";
-    throw new StructuredOutputError(
-      `[llm-gateway] \uAD6C\uC870\uD654 \uCD9C\uB825 \uC2E4\uD328 \u2014 \uD504\uB85C\uBC14\uC774\uB354\uAC00 \uC644\uACB0\uB41C \uCD9C\uB825\uC744 \uB0B4\uC9C0 \uC54A\uC558\uB2E4 (finishReason=${result.finishReason})${hint}`,
-      normalizeUsage(result.usage),
-      { cause }
-    );
+    throw incompleteOutputError(result.finishReason, result.usage, cause);
   }
   return {
     object,
     usage: normalizeUsage(result.usage),
     finishReason: result.finishReason
   };
+}
+function incompleteOutputError(finishReason, usage, cause) {
+  const hint = finishReason === "length" ? " \u2014 \uD1A0\uD070 \uC81C\uD55C \uC808\uB2E8, maxOutputTokens\uB97C \uB298\uB9B4 \uAC83" : "";
+  return new StructuredOutputError(
+    `[llm-gateway] \uAD6C\uC870\uD654 \uCD9C\uB825 \uC2E4\uD328 \u2014 \uD504\uB85C\uBC14\uC774\uB354\uAC00 \uC644\uACB0\uB41C \uCD9C\uB825\uC744 \uB0B4\uC9C0 \uC54A\uC558\uB2E4 (finishReason=${finishReason})${hint}`,
+    normalizeUsage(usage),
+    { cause }
+  );
 }
 async function executeText2Step(model, schema, opts) {
   const schemaBlock = await buildSchemaBlock(schema);

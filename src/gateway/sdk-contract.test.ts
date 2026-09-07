@@ -129,9 +129,7 @@ describe('SDK 계약 — native 구조화 출력', () => {
   });
 
   it('토큰 절단(finishReason=length)은 usage를 실은 진단 가능한 에러가 된다', async () => {
-    // SDK는 finishReason이 'stop'일 때만 output을 resolve한다. 그대로 두면
-    // result.output 접근이 NoOutputGeneratedError를 던지고, 과금된 usage가
-    // 함께 유실돼 runModule의 실패-usage 보존 경로가 무력해진다.
+    // 미완결 JSON의 SDK 파싱 실패에서도 과금된 usage를 보존한다.
     installModel({ text: '{"summary":"잘린', finish: 'length', input: 200, output: 4096 });
 
     await expect(
@@ -160,16 +158,11 @@ describe('SDK 계약 — native 구조화 출력', () => {
     // 한다. cause가 다른 종류로 바뀌면 그것 자체가 SDK 계약 변화의 신호다.
     await expect(
       analyzeStructured('분석해줘', TestSchema, { provider: 'anthropic' }),
-    ).rejects.toMatchObject({ cause: { name: 'AI_NoOutputGeneratedError' } });
+    ).rejects.toMatchObject({ cause: { name: 'AI_NoObjectGeneratedError' } });
   });
 
-  // `finishReason !== 'stop'`을 미리 검사하는 대신 output 접근만 try로 감싼 선택의
-  // 전제 — "완결되지 않은 출력이면 반드시 throw한다" — 를 여기서 고정한다.
-  // 특히 tool-calls: anthropic은 native 경로에서 classic tool_use(jsonTool)를 쓰므로
-  // 그 모드가 tool-calls를 낸다면 넓은 가드는 성공 경로를 막았을 것이다. 실제로는
-  // tool-calls에서도 output이 resolve되지 않으므로, 그 모드는 stop을 낸다는 뜻이고
-  // 두 방식의 동작은 같다. 이 목록이 깨지면 방어 방식을 다시 검토해야 한다.
-  it.each(['tool-calls', 'content-filter', 'error', 'other'] as const)(
+  // SDK의 파싱 성공과 무관하게 미완결 finishReason은 실패로 유지한다.
+  it.each(['length', 'tool-calls', 'content-filter', 'error', 'other'] as const)(
     "finishReason='%s'도 완결되지 않은 출력으로 다뤄진다",
     async (finish) => {
       installModel({ text: '{"summary":"ok","score":1}', finish, input: 7, output: 3 });

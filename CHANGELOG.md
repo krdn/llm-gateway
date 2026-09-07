@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.1.1 (2026-09-07)
+
+- 모델 연동 SDK 패치 업데이트: `@ai-sdk/anthropic` 4.0.36 → 4.0.49,
+  `@ai-sdk/google` 4.0.39 → 4.0.64, `@ai-sdk/openai` 4.0.36 → 4.0.60,
+  `ai` 7.0.58 → 7.0.93.
+- SDK의 구조화 출력 파싱 시점 변경에 대응해 미완결 `finishReason`은 계속 실패로 처리하고,
+  절단된 JSON의 `NoObjectGeneratedError`를 원인으로 보존하며 토큰 사용량과 종료 사유를 전달한다.
+- 2026-09-07 공식 모델 정보 확인: 기본 모델은 유지한다.
+  [Claude Sonnet 5](https://www.anthropic.com/news/claude-sonnet-5),
+  [Gemini 3.7 Flash](https://ai.google.dev/gemini-api/docs/changelog),
+  [DeepSeek V4 Flash](https://api-docs.deepseek.com/updates/)의 같은 등급 후속 모델은 확인되지 않았다.
+  [OpenAI 모델 목록](https://developers.openai.com/api/docs/models)의 GPT-6 Astra는 상위 등급이므로
+  비용 중심 기본값인 GPT-5.6 Luna를 대체하지 않는다. 모델은 기존 `model` 옵션으로 지정할 수 있다.
+
 ## 5.1.0 (2026-08-20)
 
 **마이그레이션 요약: `model` 을 명시하는 소비자는 영향 없다. `model` 을 생략해 기본값에

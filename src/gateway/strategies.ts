@@ -6,6 +6,7 @@ import {
   asSchema,
   generateText,
   Output,
+  NoObjectGeneratedError,
   type FinishReason,
   type FlexibleSchema,
   type LanguageModel,
@@ -109,34 +110,26 @@ async function executeNative<T>(
       : {}),
     maxOutputTokens: opts.maxOutputTokens,
     abortSignal: opts.abortSignal,
+  }).catch((cause: unknown) => {
+    // 새 SDK는 output getter 이전, generateText 안에서 파싱 오류를 던진다.
+    // stop의 스키마/JSON 오류는 원본 SDK 에러로 그대로 전달한다.
+    if (NoObjectGeneratedError.isInstance(cause) && cause.finishReason !== 'stop') {
+      throw incompleteOutputError(cause.finishReason, cause.usage, cause);
+    }
+    throw cause;
   });
 
-  // SDK는 finishReason이 'stop'일 때만 output을 resolve한다. 그 외 모든 값
-  // (length·tool-calls·content-filter·error·other — 실측으로 전부 확인)에서
-  // `result.output` 접근은 NoOutputGeneratedError를 던지는데, 그 에러는 usage를
-  // 싣지 않아 **이미 과금된 토큰이 집계에서 사라진다** (runModule의 실패-usage
-  // 보존은 StructuredOutputError·NoObjectGeneratedError만 인식한다). 폴백 경로가
-  // 이중 실패를 StructuredOutputError로 감싸는 것과 같은 이유로, native 경로도
-  // 사유와 usage를 실어 던진다.
-  //
-  // 선검사(`finishReason !== 'stop'`)가 아니라 접근을 try로 감싸는 이유: 동작은
-  // 같지만(위 실측), SDK가 나중에 resolve 조건을 넓히면 이쪽만 자동으로 따라간다.
-  // 원본 에러는 cause로 남긴다 — 여기서 걸리는 것이 NoOutputGeneratedError가
-  // 아닐 가능성(그 자체가 계약 변화의 신호다)을 뭉개지 않기 위해서다.
+  // SDK 7.0.93은 일부 미완결 응답도 파싱한다. 성공 여부는 SDK의
+  // output resolve 조건에 맡기지 않고 기존 계약(stop만 성공)을 유지한다.
+  if (result.finishReason !== 'stop') {
+    throw incompleteOutputError(result.finishReason, result.usage);
+  }
+
   let object: T;
   try {
     object = result.output;
   } catch (cause) {
-    const hint =
-      result.finishReason === 'length'
-        ? ' — 토큰 제한 절단, maxOutputTokens를 늘릴 것'
-        : '';
-    throw new StructuredOutputError(
-      `[llm-gateway] 구조화 출력 실패 — 프로바이더가 완결된 출력을 내지 않았다 ` +
-        `(finishReason=${result.finishReason})${hint}`,
-      normalizeUsage(result.usage),
-      { cause },
-    );
+    throw incompleteOutputError(result.finishReason, result.usage, cause);
   }
 
   return {
@@ -144,6 +137,16 @@ async function executeNative<T>(
     usage: normalizeUsage(result.usage),
     finishReason: result.finishReason,
   };
+}
+
+function incompleteOutputError(finishReason: FinishReason | undefined, usage: unknown, cause?: unknown) {
+  const hint = finishReason === 'length' ? ' — 토큰 제한 절단, maxOutputTokens를 늘릴 것' : '';
+  return new StructuredOutputError(
+    `[llm-gateway] 구조화 출력 실패 — 프로바이더가 완결된 출력을 내지 않았다 ` +
+      `(finishReason=${finishReason})${hint}`,
+    normalizeUsage(usage),
+    { cause },
+  );
 }
 
 /**
