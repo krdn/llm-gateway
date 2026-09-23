@@ -1,29 +1,8 @@
-import { FinishReason, LanguageModelUsage, FlexibleSchema } from 'ai';
-import { N as NormalizedUsage } from '../normalize-usage-sTTPLOZv.js';
-export { n as normalizeUsage } from '../normalize-usage-sTTPLOZv.js';
-import { A as AIProvider } from '../provider-meta-BkGweTb-.js';
-export { a as AI_PROVIDER_VALUES, b as AccessMethod, C as CallMethod, P as PROVIDER_REGISTRY, c as ProviderMeta, g as getProvidersByAccess, i as isProxyCli, n as needsTextFallback } from '../provider-meta-BkGweTb-.js';
-
-interface StrategyResult<T> {
-    object: T;
-    usage: NormalizedUsage;
-    finishReason: FinishReason;
-}
-/**
- * 구조화 출력이 실패했지만 토큰은 이미 과금된 경우에 던지는 에러.
- *
- * 두 경로에서 나온다 — text2step 이중 실패, 그리고 native 경로에서 프로바이더가
- * 완결된 출력을 내지 않은 경우(토큰 절단 등). 어느 쪽이든 호출은 HTTP 레벨로
- * 성공해 토큰이 실제 과금된 상태이므로, 소비한 usage를 에러에 실어 실패한
- * 분석도 비용 집계(checkCostLimit/onPersist)에 포함될 수 있게 한다.
- * runModule이 이를 감지해 failed 결과에 usage를 싣는다.
- */
-declare class StructuredOutputError extends Error {
-    readonly usage: NormalizedUsage;
-    constructor(message: string, usage: NormalizedUsage, options?: {
-        cause?: unknown;
-    });
-}
+import { R as ResponseInfo, N as NormalizedUsage, a as StrategyResult } from '../strategies-BEJeGNqa.js';
+export { S as StructuredOutputError, n as normalizeUsage } from '../strategies-BEJeGNqa.js';
+import { LanguageModelUsage, FinishReason, FlexibleSchema } from 'ai';
+import { AIProvider } from '../metadata.js';
+export { AI_PROVIDER_VALUES, AccessMethod, CallMethod, PROVIDER_REGISTRY, ProviderMeta, getProvidersByAccess, isProxyCli, needsTextFallback } from '../metadata.js';
 
 interface AIGatewayOptions {
     provider?: AIProvider;
@@ -43,6 +22,7 @@ interface AIGatewayOptions {
 }
 /** analyzeText 결과 — usage는 프로바이더 원본 필드 + 정규화 필드 병합 */
 interface AnalyzeTextResult {
+    responses?: ResponseInfo[];
     text: string;
     usage: LanguageModelUsage & NormalizedUsage;
     finishReason: FinishReason;
@@ -76,4 +56,4 @@ declare function analyzeText(prompt: string, options?: AIGatewayOptions): Promis
  */
 declare function analyzeStructured<T>(prompt: string, schema: FlexibleSchema<T>, options?: AIGatewayOptions): Promise<StrategyResult<T>>;
 
-export { type AIGatewayOptions, AIProvider, type AnalyzeTextResult, NormalizedUsage, StructuredOutputError, analyzeStructured, analyzeText };
+export { type AIGatewayOptions, AIProvider, type AnalyzeTextResult, NormalizedUsage, ResponseInfo, analyzeStructured, analyzeText };

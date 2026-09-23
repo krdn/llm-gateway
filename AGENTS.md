@@ -66,6 +66,7 @@ Dependency injection interfaces for external concerns:
 ```
 @krdn/llm-gateway           # Everything
 @krdn/llm-gateway/gateway   # Gateway only
+@krdn/llm-gateway/metadata  # Provider metadata only (no SDK imports)
 @krdn/llm-gateway/adapters  # Adapter interfaces + in-memory implementations
 @krdn/llm-gateway/runner    # runModule + retryWithPolicy + retry utils
 ```

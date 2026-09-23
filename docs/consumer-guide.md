@@ -85,6 +85,7 @@ const result = await runModule(sentimentModule, inputData, {
 ```
 @krdn/llm-gateway           # 전체
 @krdn/llm-gateway/gateway   # Gateway만 (analyzeText, analyzeStructured, normalizeUsage)
+@krdn/llm-gateway/metadata  # 브라우저용 순수 provider 메타데이터 (SDK import 없음)
 @krdn/llm-gateway/adapters  # 어댑터 인터페이스 + in-memory 구현
 @krdn/llm-gateway/runner    # runModule + retryWithPolicy + retry utils
 ```

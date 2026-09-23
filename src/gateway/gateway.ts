@@ -1,7 +1,7 @@
 import { generateText, type FinishReason, type FlexibleSchema, type LanguageModelUsage } from 'ai';
 import type { AIProvider } from './provider-meta';
 import { getModel } from './model-factory';
-import { executeStructured } from './strategies';
+import { executeStructured, responseInfo, type ResponseInfo } from './strategies';
 import { normalizeUsage, type NormalizedUsage } from './normalize-usage';
 
 export type { AIProvider };
@@ -43,6 +43,7 @@ function mergeAbortSignals(external?: AbortSignal, timeoutMs?: number): AbortSig
 
 /** analyzeText 결과 — usage는 프로바이더 원본 필드 + 정규화 필드 병합 */
 export interface AnalyzeTextResult {
+  responses?: ResponseInfo[];
   text: string;
   usage: LanguageModelUsage & NormalizedUsage;
   finishReason: FinishReason;
@@ -71,6 +72,7 @@ export async function analyzeText(
   });
   return {
     text: result.text,
+    responses: [responseInfo(result)],
     usage: { ...result.usage, ...normalizeUsage(result.usage) },
     finishReason: result.finishReason,
   };

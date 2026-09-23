@@ -3,6 +3,7 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
+    metadata: 'src/gateway/provider-meta.ts',
     'gateway/index': 'src/gateway/index.ts',
     'adapters/index': 'src/adapters/index.ts',
     'runner/index': 'src/runner/index.ts',

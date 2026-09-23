@@ -5,6 +5,7 @@
 import type { FlexibleSchema } from 'ai';
 import type { AIProvider } from './gateway/provider-meta';
 import type { NormalizedUsage } from './gateway/normalize-usage';
+import type { ResponseInfo } from './gateway/strategies';
 
 export type { AIProvider };
 // 호환성 별칭
@@ -40,7 +41,7 @@ export interface AnalysisModule<TInput = unknown, TResult = unknown> {
 }
 
 /** 모듈 실행 usage — 정규화 토큰 수 + 실행 컨텍스트(provider/model) */
-export type ModuleUsage = NormalizedUsage & { provider: string; model: string };
+export type ModuleUsage = NormalizedUsage & { provider: string; model: string; responses?: ResponseInfo[] };
 
 /**
  * 분석 모듈 실행 결과 — `status`로 판별되는 discriminated union.

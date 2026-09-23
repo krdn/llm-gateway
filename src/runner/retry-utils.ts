@@ -1,5 +1,6 @@
 // Rate limit 재시도 유틸리티 (runModule 및 소비자 파이프라인 공용)
 import { APICallError, RetryError } from 'ai';
+import { StructuredOutputError } from '../gateway/strategies';
 
 /**
  * AI SDK가 던진 에러에서 구조화된 APICallError를 꺼낸다.
@@ -13,6 +14,9 @@ function unwrapApiError(error: unknown): APICallError | undefined {
 
 /** Rate limit 에러 감지 (재시도 가능한 에러) */
 export function isRateLimitError(error: unknown): boolean {
+  // 파싱 실패/분석 후 변환 실패는 전체 분석을 반복해도 해결을 보장하지 않는다.
+  // 원인 또는 모델 출력에 429 문구가 있어도 이미 소비한 분석을 다시 실행하지 않는다.
+  if (StructuredOutputError.isInstance(error)) return false;
   const apiError = unwrapApiError(error);
   if (apiError?.statusCode !== undefined) {
     return apiError.statusCode === 429;
@@ -38,6 +42,7 @@ export function isRateLimitError(error: unknown): boolean {
  * 상위 재시도는 무익하다.
  */
 export function isServerOverloadError(error: unknown): boolean {
+  if (StructuredOutputError.isInstance(error)) return false;
   const apiError = unwrapApiError(error);
   if (apiError?.statusCode !== undefined) {
     // 529 = Anthropic overloaded_error

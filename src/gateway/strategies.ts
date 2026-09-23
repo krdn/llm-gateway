@@ -24,8 +24,27 @@ export interface StrategyExecuteOptions {
   abortSignal: AbortSignal;
 }
 
+/** SDK가 보고한 모델/종료 사유. 실제 서빙 모델의 독립적인 증명은 아니다. */
+export interface ResponseInfo {
+  model?: string;
+  finishReason: FinishReason;
+}
+
+/** @internal 텍스트/구조화 경로가 공유하는 응답 메타데이터 추출. */
+export function responseInfo(result: {
+  response?: { modelId?: string };
+  finishReason: FinishReason;
+}): ResponseInfo {
+  return {
+    ...(result.response?.modelId ? { model: result.response.modelId } : {}),
+    finishReason: result.finishReason,
+  };
+}
+
 export interface StrategyResult<T> {
   object: T;
+  /** 호출 순서대로 기록. 복구 전 응답의 절단 여부도 보존한다. */
+  responses?: ResponseInfo[];
   usage: NormalizedUsage;
   finishReason: FinishReason;
 }
@@ -42,13 +61,30 @@ const CONVERTER_INPUT_MAX_CHARS = 32_000;
  * 분석도 비용 집계(checkCostLimit/onPersist)에 포함될 수 있게 한다.
  * runModule이 이를 감지해 failed 결과에 usage를 싣는다.
  */
-export class StructuredOutputError extends Error {
-  readonly usage: NormalizedUsage;
+const structuredOutputErrorMarker = Symbol.for('@krdn/llm-gateway/StructuredOutputError');
 
-  constructor(message: string, usage: NormalizedUsage, options?: { cause?: unknown }) {
+export class StructuredOutputError extends Error {
+  private readonly [structuredOutputErrorMarker] = true;
+
+  /** 서브패스별 독립 번들 사이에서도 같은 오류를 인식한다. */
+  static isInstance(error: unknown): error is StructuredOutputError {
+    return (
+      typeof error === 'object' && error !== null &&
+      structuredOutputErrorMarker in error && error[structuredOutputErrorMarker] === true
+    );
+  }
+
+  readonly usage: NormalizedUsage;
+  readonly responses?: ResponseInfo[];
+
+  constructor(
+    message: string, usage: NormalizedUsage,
+    options?: { cause?: unknown; responses?: ResponseInfo[] },
+  ) {
     super(message, options);
     this.name = 'StructuredOutputError';
     this.usage = usage;
+    this.responses = options?.responses;
   }
 }
 
@@ -114,7 +150,7 @@ async function executeNative<T>(
     // 새 SDK는 output getter 이전, generateText 안에서 파싱 오류를 던진다.
     // stop의 스키마/JSON 오류는 원본 SDK 에러로 그대로 전달한다.
     if (NoObjectGeneratedError.isInstance(cause) && cause.finishReason !== 'stop') {
-      throw incompleteOutputError(cause.finishReason, cause.usage, cause);
+      throw incompleteOutputError(cause.finishReason, cause.usage, cause, cause.response);
     }
     throw cause;
   });
@@ -122,30 +158,34 @@ async function executeNative<T>(
   // SDK 7.0.93은 일부 미완결 응답도 파싱한다. 성공 여부는 SDK의
   // output resolve 조건에 맡기지 않고 기존 계약(stop만 성공)을 유지한다.
   if (result.finishReason !== 'stop') {
-    throw incompleteOutputError(result.finishReason, result.usage);
+    throw incompleteOutputError(result.finishReason, result.usage, undefined, result.response);
   }
 
   let object: T;
   try {
     object = result.output;
   } catch (cause) {
-    throw incompleteOutputError(result.finishReason, result.usage, cause);
+    throw incompleteOutputError(result.finishReason, result.usage, cause, result.response);
   }
 
   return {
     object,
+    responses: [responseInfo(result)],
     usage: normalizeUsage(result.usage),
     finishReason: result.finishReason,
   };
 }
 
-function incompleteOutputError(finishReason: FinishReason | undefined, usage: unknown, cause?: unknown) {
+function incompleteOutputError(
+  finishReason: FinishReason | undefined, usage: unknown,
+  cause?: unknown, response?: { modelId?: string },
+) {
   const hint = finishReason === 'length' ? ' — 토큰 제한 절단, maxOutputTokens를 늘릴 것' : '';
   return new StructuredOutputError(
     `[llm-gateway] 구조화 출력 실패 — 프로바이더가 완결된 출력을 내지 않았다 ` +
       `(finishReason=${finishReason})${hint}`,
     normalizeUsage(usage),
-    { cause },
+    { cause, ...(finishReason ? { responses: [responseInfo({ response, finishReason })] } : {}) },
   );
 }
 
@@ -197,6 +237,7 @@ ${schemaBlock}
   if (step1Result.ok) {
     return {
       object: step1Result.data,
+      responses: [responseInfo(step1)],
       usage: normalizeUsage(step1.usage),
       finishReason: step1.finishReason,
     };
@@ -235,12 +276,22 @@ ${schemaBlock}
     prompt: converterPrompt,
     maxOutputTokens: opts.maxOutputTokens,
     abortSignal: opts.abortSignal,
+  }).catch((cause: unknown) => {
+    // SDK의 변환 호출 재시도가 소진돼도 이미 끝난 분석(step1)은 재실행하지 않는다.
+    // 응답이 없는 step2의 사용량은 알 수 없다. 여기 보존하는 값은 확인된 하한이다.
+    throw new StructuredOutputError(
+      '[llm-gateway] 구조화 출력 실패 — step2 호출 실패 (step1 사용량만 확인됨): ' +
+        (cause instanceof Error ? cause.message : String(cause)),
+      normalizeUsage(step1.usage),
+      { cause, responses: [responseInfo(step1)] },
+    );
   });
 
   const step2Result = await tryParseAndValidate(step2.text, schema);
   if (step2Result.ok) {
     return {
       object: step2Result.data,
+      responses: [responseInfo(step1), responseInfo(step2)],
       usage: sumUsage(step1.usage, step2.usage),
       finishReason: step2.finishReason,
     };
@@ -255,6 +306,7 @@ ${schemaBlock}
       `step2(finishReason=${step2.finishReason}): ${step2Result.reason}\n` +
       `step2 응답 (처음 500자): ${step2.text.slice(0, 500)}`,
     sumUsage(step1.usage, step2.usage),
+    { responses: [responseInfo(step1), responseInfo(step2)] },
   );
 }
 

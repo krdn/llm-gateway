@@ -166,6 +166,11 @@ export async function runModule<TInput, TResult>(
   let cancelPoll: ReturnType<typeof setInterval> | undefined;
   // catch 블록에서 실패 usage에 provider/model 컨텍스트를 붙이기 위해 호이스팅
   let resolvedConfig: ResolvedModelConfig | undefined;
+  // catch에서도 취소 원인을 읽는다. 변환 오류가 usage 보존을 위해 감싸져도 취소는 유지한다.
+  const controller = new AbortController();
+  const gatewaySignal = options.abortSignal
+    ? AbortSignal.any([options.abortSignal, controller.signal])
+    : controller.signal;
 
   try {
     // 비용 한도 pre-flight (noop 구현은 항상 true)
@@ -191,10 +196,6 @@ export async function runModule<TInput, TResult>(
     const prompt = module.buildPrompt(input);
 
     // 취소 전파: 외부 signal + pipelineControl 취소 폴링을 하나의 signal로 통합
-    const controller = new AbortController();
-    const gatewaySignal = options.abortSignal
-      ? AbortSignal.any([options.abortSignal, controller.signal])
-      : controller.signal;
 
     if (pipelineControl !== noopPipelineControl) {
       cancelPoll = setInterval(() => {
@@ -240,6 +241,7 @@ export async function runModule<TInput, TResult>(
       ...result.usage,
       provider: config.provider,
       model: config.model,
+      ...(result.responses ? { responses: result.responses } : {}),
     };
     const moduleResult: AnalysisModuleResult<TResult> = {
       module: module.name,
@@ -267,19 +269,24 @@ export async function runModule<TInput, TResult>(
     return moduleResult;
   } catch (error) {
     const raw = error instanceof Error ? error.message : String(error);
-    const errorMessage = raw === 'aborted' ? '사용자에 의해 중지됨' : raw;
+    const errorMessage = gatewaySignal.aborted
+      ? gatewaySignal.reason?.name === 'TimeoutError' ? '작업 제한 시간 초과' : '사용자에 의해 중지됨'
+      : raw === 'aborted' ? '사용자에 의해 중지됨' : raw;
 
     // 실패 경로에서도 실제 소비한 토큰을 보존 — StructuredOutputError(text2step
     // 이중 실패)와 AI SDK NoObjectGeneratedError(native 파싱 실패)는 usage를 실어 온다
     const failedTokens =
-      error instanceof StructuredOutputError
+      StructuredOutputError.isInstance(error)
         ? error.usage
         : NoObjectGeneratedError.isInstance(error) && error.usage
           ? normalizeUsage(error.usage)
           : undefined;
     const failedUsage =
       failedTokens && resolvedConfig
-        ? { ...failedTokens, provider: resolvedConfig.provider, model: resolvedConfig.model }
+        ? {
+            ...failedTokens, provider: resolvedConfig.provider, model: resolvedConfig.model,
+            ...(StructuredOutputError.isInstance(error) && error.responses ? { responses: error.responses } : {}),
+          }
         : undefined;
 
     safeProgress({ module: module.name, phase: 'fail', message: errorMessage });

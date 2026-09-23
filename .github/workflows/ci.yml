@@ -31,6 +31,7 @@ jobs:
       - run: pnpm lint --max-warnings 0
       - run: pnpm test
       - run: pnpm build
+      - run: node --test tests/package-check.mjs
 
   # engines가 광고하는 하한은 **정확히 22.0.0**인데 위 matrix의 `22`는 러너가 주는
   # 최신 22.x다. 그 사이(22.0 이후 22.x에 추가된 API)를 쓰면 광고된 하한에서만 깨지고

@@ -40,7 +40,7 @@ function providerUsage(input: number, output: number) {
 }
 
 type FinishUnified = 'stop' | 'length' | 'tool-calls' | 'content-filter' | 'error' | 'other';
-type Turn = { text: string; finish?: FinishUnified; input?: number; output?: number };
+type Turn = { text: string; finish?: FinishUnified; input?: number; output?: number; model?: string };
 
 const hoisted = vi.hoisted(() => ({
   /** 현재 테스트가 쓰는 모델. 팩토리 mock이 호출 시점에 읽는다. */
@@ -62,6 +62,7 @@ function installModel(...turns: Turn[]): void {
         finishReason: { unified: turn.finish ?? 'stop', raw: turn.finish ?? 'stop' },
         usage: providerUsage(turn.input ?? 10, turn.output ?? 5),
         warnings: [],
+        ...(turn.model ? { response: { id: 'response', timestamp: new Date(), modelId: turn.model } } : {}),
       };
     },
   });
@@ -75,6 +76,8 @@ vi.mock('@ai-sdk/openai', () => ({
 
 import { analyzeStructured, analyzeText } from './gateway';
 import { StructuredOutputError } from './strategies';
+import { APICallError } from 'ai';
+import { runModule } from '../runner/run-module';
 
 const TestSchema = z.object({ summary: z.string(), score: z.number() });
 
@@ -336,4 +339,127 @@ describe('SDK 계약 — 선택적 peer 가 타는 V3 경로', () => {
     expect(result.usage).toMatchObject({ inputTokens: 11, outputTokens: 3 });
     expect(hoisted.calls).toHaveLength(1);
   });
+});
+
+
+describe('SDK 계약 — 변환 호출 실패 시 이미 소비한 usage 보존', () => {
+  it.each([429, 503, 400])('step2 HTTP %s는 원인을 보존하고 step1을 재실행하지 않는다', async (statusCode) => {
+    let calls = 0;
+    const cause = new APICallError({
+      message: `HTTP ${statusCode}`, url: 'https://provider.test', requestBodyValues: {},
+      statusCode, isRetryable: false,
+    });
+    hoisted.model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        if (++calls > 1) throw cause;
+        return {
+          content: [{ type: 'text' as const, text: 'plain analysis, not JSON' }],
+          finishReason: { unified: 'stop' as const, raw: 'stop' },
+          usage: providerUsage(12, 8), warnings: [],
+        };
+      },
+    });
+    const result = await runModule({
+      name: 'partial', displayName: 'partial', provider: 'ollama', model: 'local-model',
+      schema: TestSchema, buildPrompt: () => 'analyze', buildSystemPrompt: () => '',
+    }, 'input');
+    expect(result.status).toBe('failed');
+    expect(result).toMatchObject({ usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 } });
+    expect(calls).toBe(2);
+  });
+
+  it('직접 호출 오류도 step1 usage와 원본 cause를 전달한다', async () => {
+    let calls = 0;
+    const cause = new Error('connection closed');
+    hoisted.model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        if (++calls > 1) throw cause;
+        return {
+          content: [{ type: 'text' as const, text: 'plain analysis' }],
+          finishReason: { unified: 'stop' as const, raw: 'stop' },
+          usage: providerUsage(12, 8), warnings: [],
+        };
+      },
+    });
+    await expect(analyzeStructured('analyze', TestSchema, { provider: 'ollama', model: 'local-model' }))
+      .rejects.toMatchObject({ name: 'StructuredOutputError', cause, usage: { totalTokens: 20 } });
+  });
+});
+
+
+describe('SDK 계약 — 요청 모델과 보고 모델/종료 사유 구분', () => {
+  it('텍스트 응답의 보고 모델을 반환한다', async () => {
+    installModel({ text: 'hello', model: 'served-text' });
+    const result = await analyzeText('hi', { provider: 'anthropic', model: 'requested-alias' });
+    expect(result.responses).toEqual([{ model: 'served-text', finishReason: 'stop' }]);
+  });
+
+  it('복구 전 절단과 두 호출의 보고 모델을 Runner usage에도 보존한다', async () => {
+    installModel(
+      { text: 'partial analysis', finish: 'length', model: 'served-first' },
+      { text: '{"summary":"recovered","score":4}', model: 'served-second' },
+    );
+    const result = await runModule({
+      name: 'trace', displayName: 'trace', provider: 'ollama', model: 'requested-alias',
+      schema: TestSchema, buildPrompt: () => 'analyze', buildSystemPrompt: () => '',
+    }, 'input');
+    expect(result).toMatchObject({ status: 'completed', usage: {
+      model: 'requested-alias', responses: [
+        { model: 'served-first', finishReason: 'length' },
+        { model: 'served-second', finishReason: 'stop' },
+      ],
+    } });
+  });
+});
+
+
+it('변환 요청의 SDK 재시도는 유지하며 분석 단계는 반복하지 않는다', async () => {
+  let calls = 0;
+  hoisted.model = new MockLanguageModelV4({
+    doGenerate: async () => {
+      calls++;
+      if (calls === 2) throw new APICallError({
+        message: '429', url: 'https://provider.test', requestBodyValues: {}, statusCode: 429,
+        isRetryable: true, responseHeaders: { 'retry-after': '0' },
+      });
+      return {
+        content: [{ type: 'text' as const, text: calls === 1 ? 'plain analysis' : '{"summary":"ok","score":1}' }],
+        finishReason: { unified: 'stop' as const, raw: 'stop' },
+        usage: providerUsage(12, 8), warnings: [],
+      };
+    },
+  });
+  const result = await analyzeStructured('analyze', TestSchema, { provider: 'ollama', model: 'local' });
+  expect(calls).toBe(3);
+  expect(result.usage).toEqual({ inputTokens: 24, outputTokens: 16, totalTokens: 40 });
+});
+
+
+it.each([
+  [new Error('aborted'), '사용자에 의해 중지됨'],
+  [new DOMException('deadline', 'TimeoutError'), '작업 제한 시간 초과'],
+])('step2 중 중단도 원인과 step1 usage를 보존한다: %s', async (reason, message) => {
+  const controller = new AbortController();
+  let calls = 0;
+  hoisted.model = new MockLanguageModelV4({
+    doGenerate: async (options) => {
+      if (++calls === 2) {
+        return new Promise((_resolve, reject) => {
+          options.abortSignal!.addEventListener('abort', () => reject(options.abortSignal!.reason), { once: true });
+          queueMicrotask(() => controller.abort(reason));
+        });
+      }
+      return {
+        content: [{ type: 'text' as const, text: 'plain analysis' }],
+        finishReason: { unified: 'stop' as const, raw: 'stop' },
+        usage: providerUsage(12, 8), warnings: [],
+      };
+    },
+  });
+  const result = await runModule({
+    name: 'cancel', displayName: 'cancel', provider: 'ollama', model: 'local',
+    schema: TestSchema, buildPrompt: () => 'analyze', buildSystemPrompt: () => '',
+  }, 'input', { abortSignal: controller.signal });
+  expect(result).toMatchObject({ status: 'failed', errorMessage: message, usage: { totalTokens: 20 } });
+  expect(calls).toBe(2);
 });

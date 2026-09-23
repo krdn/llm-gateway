@@ -385,13 +385,27 @@ async function tryParseAndValidate(text, schema) {
 }
 
 // src/gateway/strategies.ts
+function responseInfo(result) {
+  return {
+    ...result.response?.modelId ? { model: result.response.modelId } : {},
+    finishReason: result.finishReason
+  };
+}
 var CONVERTER_INPUT_MAX_CHARS = 32e3;
+var structuredOutputErrorMarker = /* @__PURE__ */ Symbol.for("@krdn/llm-gateway/StructuredOutputError");
 var StructuredOutputError = class extends Error {
+  [structuredOutputErrorMarker] = true;
+  /** 서브패스별 독립 번들 사이에서도 같은 오류를 인식한다. */
+  static isInstance(error) {
+    return typeof error === "object" && error !== null && structuredOutputErrorMarker in error && error[structuredOutputErrorMarker] === true;
+  }
   usage;
+  responses;
   constructor(message, usage, options) {
     super(message, options);
     this.name = "StructuredOutputError";
     this.usage = usage;
+    this.responses = options?.responses;
   }
 };
 async function executeStructured(provider, model, schema, opts) {
@@ -418,31 +432,32 @@ async function executeNative(provider, model, schema, opts) {
     abortSignal: opts.abortSignal
   }).catch((cause) => {
     if (NoObjectGeneratedError.isInstance(cause) && cause.finishReason !== "stop") {
-      throw incompleteOutputError(cause.finishReason, cause.usage, cause);
+      throw incompleteOutputError(cause.finishReason, cause.usage, cause, cause.response);
     }
     throw cause;
   });
   if (result.finishReason !== "stop") {
-    throw incompleteOutputError(result.finishReason, result.usage);
+    throw incompleteOutputError(result.finishReason, result.usage, void 0, result.response);
   }
   let object;
   try {
     object = result.output;
   } catch (cause) {
-    throw incompleteOutputError(result.finishReason, result.usage, cause);
+    throw incompleteOutputError(result.finishReason, result.usage, cause, result.response);
   }
   return {
     object,
+    responses: [responseInfo(result)],
     usage: normalizeUsage(result.usage),
     finishReason: result.finishReason
   };
 }
-function incompleteOutputError(finishReason, usage, cause) {
+function incompleteOutputError(finishReason, usage, cause, response) {
   const hint = finishReason === "length" ? " \u2014 \uD1A0\uD070 \uC81C\uD55C \uC808\uB2E8, maxOutputTokens\uB97C \uB298\uB9B4 \uAC83" : "";
   return new StructuredOutputError(
     `[llm-gateway] \uAD6C\uC870\uD654 \uCD9C\uB825 \uC2E4\uD328 \u2014 \uD504\uB85C\uBC14\uC774\uB354\uAC00 \uC644\uACB0\uB41C \uCD9C\uB825\uC744 \uB0B4\uC9C0 \uC54A\uC558\uB2E4 (finishReason=${finishReason})${hint}`,
     normalizeUsage(usage),
-    { cause }
+    { cause, ...finishReason ? { responses: [responseInfo({ response, finishReason })] } : {} }
   );
 }
 async function executeText2Step(model, schema, opts) {
@@ -468,6 +483,7 @@ ${schemaBlock}
   if (step1Result.ok) {
     return {
       object: step1Result.data,
+      responses: [responseInfo(step1)],
       usage: normalizeUsage(step1.usage),
       finishReason: step1.finishReason
     };
@@ -497,11 +513,18 @@ ${schemaBlock}
     prompt: converterPrompt,
     maxOutputTokens: opts.maxOutputTokens,
     abortSignal: opts.abortSignal
+  }).catch((cause) => {
+    throw new StructuredOutputError(
+      "[llm-gateway] \uAD6C\uC870\uD654 \uCD9C\uB825 \uC2E4\uD328 \u2014 step2 \uD638\uCD9C \uC2E4\uD328 (step1 \uC0AC\uC6A9\uB7C9\uB9CC \uD655\uC778\uB428): " + (cause instanceof Error ? cause.message : String(cause)),
+      normalizeUsage(step1.usage),
+      { cause, responses: [responseInfo(step1)] }
+    );
   });
   const step2Result = await tryParseAndValidate(step2.text, schema);
   if (step2Result.ok) {
     return {
       object: step2Result.data,
+      responses: [responseInfo(step1), responseInfo(step2)],
       usage: sumUsage(step1.usage, step2.usage),
       finishReason: step2.finishReason
     };
@@ -511,7 +534,8 @@ ${schemaBlock}
   throw new StructuredOutputError(
     `[llm-gateway] \uAD6C\uC870\uD654 \uCD9C\uB825 \uC2E4\uD328${schemaHint} \u2014 step1(finishReason=${step1.finishReason}${step1Hint}): ${step1Result.reason} / step2(finishReason=${step2.finishReason}): ${step2Result.reason}
 step2 \uC751\uB2F5 (\uCC98\uC74C 500\uC790): ${step2.text.slice(0, 500)}`,
-    sumUsage(step1.usage, step2.usage)
+    sumUsage(step1.usage, step2.usage),
+    { responses: [responseInfo(step1), responseInfo(step2)] }
   );
 }
 function isZodV3Schema(schema) {
@@ -560,6 +584,7 @@ async function analyzeText(prompt, options = {}) {
   });
   return {
     text: result.text,
+    responses: [responseInfo(result)],
     usage: { ...result.usage, ...normalizeUsage(result.usage) },
     finishReason: result.finishReason
   };

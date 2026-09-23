@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { APICallError, RetryError } from 'ai';
+import { StructuredOutputError } from '../gateway/strategies';
 import {
   isRateLimitError,
   isServerOverloadError,
@@ -382,4 +383,15 @@ describe('retryWithPolicy', () => {
     // 최초 1회만 호출되고, backoff 대기 중 abort되어 재시도로 넘어가지 않음
     expect(fn).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it('StructuredOutputError는 출력/원인에 429·503이 있어도 전체 재시도하지 않는다', async () => {
+  const error = new StructuredOutputError('step2 429 overloaded 503',
+    { inputTokens: 10, outputTokens: 5, totalTokens: 15 }, { cause: apiError(429) });
+  expect(isRateLimitError(error)).toBe(false);
+  expect(isServerOverloadError(error)).toBe(false);
+  const call = vi.fn().mockRejectedValue(error);
+  await expect(retryWithPolicy(call)).rejects.toBe(error);
+  expect(call).toHaveBeenCalledTimes(1);
 });

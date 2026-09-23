@@ -385,7 +385,7 @@ import { NoObjectGeneratedError } from 'ai';
 try {
   const { object } = await analyzeStructured(prompt, schema, opts);
 } catch (error) {
-  if (error instanceof StructuredOutputError) {
+  if (StructuredOutputError.isInstance(error)) {
     // 2-call 폴백이 두 번 다 실패 — 각 단계의 파싱/검증 사유와 finishReason이 메시지에 있다
     console.error(error.message, error.usage);   // usage가 실려 온다 (과금 집계용)
   } else if (NoObjectGeneratedError.isInstance(error)) {
@@ -465,9 +465,24 @@ import { ... } from '@krdn/llm-gateway/adapters';   // 어댑터만
 | `AnalysisInputMeta` | root | `extractMeta` 반환 타입 (`jobId`, `itemCount`) |
 | `ProviderType` | root | `AIProvider`의 호환 별칭 |
 
-브라우저 번들에서 프로바이더 메타데이터(표시명, 색상, 지원 여부)만 필요하다면 `gateway`
-서브경로의 `PROVIDER_REGISTRY` 쪽만 import 하세요 — 그 모듈은 SDK를 import하지 않고
-`sideEffects: false`라 나머지가 트리셰이킹됩니다.
+브라우저에서 메타데이터만 필요하면 SDK 의존성이 없는 전용 서브패스를 사용하세요.
+
+```ts
+import { PROVIDER_REGISTRY, type AIProvider } from '@krdn/llm-gateway/metadata';
+```
+
+`analyzeText`/`analyzeStructured` 결과의 `responses`는 호출 순서대로 SDK가 보고한
+`model`과 `finishReason`을 담습니다. Runner는 이를 `usage.responses`로 전달하고,
+`usage.model`은 기존처럼 요청 모델을 유지합니다. 보고 모델은 실제 서빙 모델의 독립적인
+증명이 아닙니다. JSON 복구 전 응답이 절단됐는지도 이 배열에서 확인할 수 있습니다.
+
+JSON 변환 호출이 실패하면 `StructuredOutputError.cause`에 원인을, `.usage`에는 확인된
+첫 분석의 사용량을 보존합니다. 실패한 요청의 미보고 usage는 알 수 없으므로 이 값은
+총 사용량의 하한일 수 있습니다. SDK의 호출 단위 재시도는 유지하지만 Runner는 이미
+끝난 분석을 다시 실행하지 않습니다. 절단 JSON의 기존 복구 성공 정책은 유지합니다.
+
+`timeoutMs`는 분석 시도 단위 제한이며 text2step의 두 호출이 공유합니다. 재시도와 대기까지
+포함한 작업 마감시간은 `runModule(..., { abortSignal: AbortSignal.timeout(ms) })`로 설정합니다.
 
 ---
 

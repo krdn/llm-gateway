@@ -8,7 +8,7 @@ export {
   type AnalyzeTextResult,
   type NormalizedUsage,
 } from './gateway';
-export { StructuredOutputError } from './strategies';
+export { StructuredOutputError, type ResponseInfo } from './strategies';
 export {
   PROVIDER_REGISTRY,
   AI_PROVIDER_VALUES,
