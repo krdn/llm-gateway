@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v7
       # pnpm 버전은 package.json의 packageManager 필드에서 읽는다 (단일 출처)
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -55,7 +55,7 @@ jobs:
       - run: pnpm build
       - run: npm pack --pack-destination /tmp
       # 여기서부터 하한이다. 빌드 산출물은 위에서 이미 만들어졌다.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22.0.0
       - name: packed artifact를 광고된 하한에서 import
@@ -82,7 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
           cache: pnpm
@@ -133,7 +133,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
           cache: pnpm
