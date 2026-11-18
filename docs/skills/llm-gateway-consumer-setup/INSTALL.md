@@ -1,20 +1,14 @@
-# 설치: llm-gateway-consumer-setup 스킬
+# 소비자 셋업 스킬 설치와 갱신
 
-이 스킬의 소스는 llm-gateway 레포에 있습니다. 어느 소비자 레포에서든 호출하려면
-전역 스킬 디렉토리로 복사하세요.
+라이브러리 저장소의 `docs/skills/llm-gateway-consumer-setup/` 전체를 사용할 도구의 스킬 폴더에 복사한다. `scripts/`와 `templates/`는 함께 설치해야 워크플로를 생성할 수 있다. 이 환경에서 Codex 공유 스킬 위치는 `~/.agents/skills`, Claude Code 기본 위치는 `~/.claude/skills`다.
 
-```bash
-cp -r docs/skills/llm-gateway-consumer-setup ~/.claude/skills/
+아래는 라이브러리 저장소 루트에서 Codex 설치본을 갱신하는 예다. 기존 설치본이 있으면 먼저 로컬 수정과 복사할 파일을 확인한다.
+
+```sh
+src=docs/skills/llm-gateway-consumer-setup/
+dest="$HOME/.agents/skills/llm-gateway-consumer-setup/"
+mkdir -p "$dest"
+rsync -ani "$src" "$dest"
 ```
 
-복사 후 Claude Code에서 "llm-gateway 셋업" 또는 `/llm-gateway-consumer-setup`으로 호출합니다.
-
-## 갱신
-
-전역 설치본은 복사 시점에 freeze됩니다. **라이브러리 레포에서 스킬이 갱신되면 다시 복사**해야
-최신 절차/템플릿이 반영됩니다:
-
-```bash
-rm -rf ~/.claude/skills/llm-gateway-consumer-setup
-cp -r docs/skills/llm-gateway-consumer-setup ~/.claude/skills/
-```
+표시된 변경을 반영하려면 `rsync -a "$src" "$dest"`를 실행한다. 다시 `rsync -anic "$src" "$dest"`로 복사한 파일의 내용이 원본과 일치하는지 확인한다. 대상에만 있는 파일은 유지된다. Claude Code에 설치할 때는 해당 스킬 경로를 대상으로 지정한다.

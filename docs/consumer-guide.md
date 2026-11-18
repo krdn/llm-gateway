@@ -114,7 +114,7 @@ llm-gateway에서 GitHub Release 생성
 ### 1단계: llm-gateway 레포에 소비자 등록
 
 `.github/workflows/publish.yml`의 `notify` job matrix에 새 소비자 레포를 추가합니다
-(현재 `krdn/gons-dashboard`, `krdn/ai-signalcraft` 두 개가 등록되어 있습니다):
+(실제 등록 목록은 발행자 워크플로에서 확인합니다):
 
 ```yaml
 jobs:
@@ -145,9 +145,7 @@ jobs:
 `llm-gateway-consumer-setup` 스킬을 실행하면 환경(매니저·node·pnpm 버전)을 감지해
 `.github/workflows/update-llm-gateway.yml`을 자동 생성합니다.
 
-수동으로 추가하려면 템플릿을 복사하세요:
-`docs/skills/llm-gateway-consumer-setup/templates/update-llm-gateway.yml`
-(`{{PNPM_VERSION}}` / `{{NODE_VERSION}}`를 프로젝트 값으로 치환)
+수동 설치도 소비자 루트에서 스킬의 `scripts/render-update.mjs`로 워크플로를 생성한 뒤 결과를 적용합니다. 매니저 선택과 인자는 [스킬 사용 절차](skills/llm-gateway-consumer-setup/SKILL.md)를 따릅니다.
 
 > dispatch 계약: 발행자(`publish.yml`의 `notify` job)는 `event-type: llm-gateway-release`,
 > payload `{"tag": ...}`를 보냅니다. 워크플로우의 `types:`는 `llm-gateway-release`여야 합니다.
